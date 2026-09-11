@@ -15,6 +15,7 @@ export class Input {
         case 'KeyR': actions.reset?.(); break;
         case 'KeyH': actions.help?.(); break;
         case 'KeyQ': actions.quality?.(); break;
+        case 'KeyT': actions.auto?.(); break;
         default: break;
       }
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
@@ -51,6 +52,7 @@ export class Input {
     tap('btn-sound', () => this.actions.mute?.());
     tap('btn-help', () => this.actions.help?.());
     tap('btn-quality', () => this.actions.quality?.());
+    tap('btn-auto', () => this.actions.auto?.());
   }
 
   get isTouch() {

@@ -13,12 +13,13 @@ export class Car {
 
     // -------------------------------------------------- materials
     this.paint = new THREE.MeshPhysicalMaterial({
-      color: 0x0c0d12,
-      metalness: 0.85,
-      roughness: 0.32,
+      color: 0x11131a,
+      metalness: 0.55,
+      roughness: 0.24,
       clearcoat: 1.0,
-      clearcoatRoughness: 0.08,
-      envMapIntensity: 1.9,
+      clearcoatRoughness: 0.05,
+      envMapIntensity: 2.6,
+      reflectivity: 0.9,
     });
     const glass = new THREE.MeshPhysicalMaterial({
       color: 0x05070c,
@@ -130,6 +131,7 @@ export class Car {
     const rimGeo = new THREE.CylinderGeometry(0.21, 0.21, 0.27, 14);
     rimGeo.rotateZ(Math.PI / 2);
     const rimMat = new THREE.MeshStandardMaterial({ color: 0x9aa2ad, metalness: 0.95, roughness: 0.25, envMapIntensity: 1.4 });
+    this.rimMat = rimMat;
     const positions = [
       { x: -0.84, z: 1.42, steer: true }, { x: 0.84, z: 1.42, steer: true },
       { x: -0.84, z: -1.42, steer: false }, { x: 0.84, z: -1.42, steer: false },
@@ -195,8 +197,21 @@ export class Car {
     this.wheelSpin = 0;
     this.slip = 0;
     this.radius = 1.15;
+    this.glassMat = glass;
     this.resetRequested = false;
     this.update(0, { throttle: 0, brake: 0, left: false, right: false, handbrake: false }, null);
+  }
+
+  /** night-city env map so the paint shows clean, colourful reflections */
+  setEnvMaps(tex, intensity = 2.6) {
+    this.paint.envMap = tex;
+    this.paint.envMapIntensity = intensity;
+    this.paint.needsUpdate = true;
+    this.glassMat.envMap = tex;
+    this.glassMat.envMapIntensity = 2.4;
+    this.glassMat.needsUpdate = true;
+    this.rimMat.envMap = tex;
+    this.rimMat.needsUpdate = true;
   }
 
   reset() {
@@ -212,7 +227,9 @@ export class Car {
    */
   update(dt, input, city) {
     if (dt <= 0) dt = 0.0001;
-    const steerTarget = (input.left ? 1 : 0) - (input.right ? 1 : 0);
+    const steerTarget = input.steer !== undefined
+      ? THREE.MathUtils.clamp(input.steer, -1, 1)
+      : (input.left ? 1 : 0) - (input.right ? 1 : 0);
     this.steer += (steerTarget - this.steer) * Math.min(1, dt * 7);
 
     const speed = Math.abs(this.vf);

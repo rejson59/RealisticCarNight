@@ -27,16 +27,22 @@ export class City {
     this.tier = 2;
     this.time = 0;
     this.pillarColliders = [];
+    this.haloItems = [];
+    this.facadeMats = [];
     this.roadLines = [];
     for (let i = 0; i <= CITY.N; i++) this.roadLines.push(-CITY.HALF + i * CITY.S);
 
     this._buildGround();
     this._buildSky();
     this._buildBlocks();
+    this._buildSkyline();
     this._buildStreetLights();
     this._buildTrafficLights();
     this._buildNeon();
     this._buildElevated();
+    this._buildRoadMarkings();
+    this._buildParked();
+    this._buildHalos();
     this._buildRain();
     this._buildMoonLight();
   }
@@ -292,6 +298,7 @@ export class City {
            #endif`
         );
       };
+      this.facadeMats.push({ mat, roofMat });
       const geo = boxGeo.clone();
       const im = new THREE.InstancedMesh(geo, [mat, mat, roofMat, roofMat, mat, mat], v.items.length);
       im.castShadow = true;
@@ -444,6 +451,7 @@ export class City {
       arm.setMatrixAt(k, m4);
       m4.compose(new THREE.Vector3(hx, 7.86, hz), q, new THREE.Vector3(1, 1, 1));
       head.setMatrixAt(k, m4);
+      this.haloItems.push({ x: hx, y: 7.8, z: hz, c: [2.6, 2.1, 1.4], s: 5.0 });
       e.set(-Math.PI / 2, p.axisX ? 0 : Math.PI / 2, 0, 'YXZ'); q.setFromEuler(e);
       m4.compose(new THREE.Vector3(hx, 0.16, hz), q, new THREE.Vector3(1, 1, 1));
       decal.setMatrixAt(k, m4);
@@ -492,12 +500,16 @@ export class City {
     this.scene.add(poleMesh);
 
     const colors = { g: new THREE.Color(0.35, 4.0, 1.6), r: new THREE.Color(4.0, 0.15, 0.15), y: new THREE.Color(4.0, 2.2, 0.2) };
+    const haloC = { g: [0.25, 2.6, 1.0], r: [2.6, 0.12, 0.12], y: [2.6, 1.4, 0.12] };
     const hg = new THREE.BoxGeometry(0.24, 0.62, 0.24);
     for (const key of ['g', 'r', 'y']) {
       const items = heads[key];
       if (!items.length) continue;
       const mesh = new THREE.InstancedMesh(hg, new THREE.MeshBasicMaterial({ color: colors[key] }), items.length);
-      items.forEach((p, k) => { m4.setPosition(p.x, 4.35, p.z); mesh.setMatrixAt(k, m4); });
+      items.forEach((p, k) => {
+        m4.setPosition(p.x, 4.35, p.z); mesh.setMatrixAt(k, m4);
+        this.haloItems.push({ x: p.x, y: 4.35, z: p.z, c: haloC[key], s: 2.0 });
+      });
       mesh.instanceMatrix.needsUpdate = true;
       this.scene.add(mesh);
     }
@@ -714,6 +726,185 @@ export class City {
     buildRibbon(cross, false);
   }
 
+  /* --------------------------------------- distant skyline (backdrop) */
+  _buildSkyline() {
+    const rnd = this.rnd;
+    const m4 = new THREE.Matrix4();
+    const items = [[], []];
+    for (let k = 0; k < 90; k++) {
+      const a = rnd() * Math.PI * 2;
+      const r = 470 + rnd() * 430;
+      const w = 26 + rnd() * 38;
+      const h = 90 + rnd() * 160;
+      items[k % 2].push({ x: Math.cos(a) * r, z: Math.sin(a) * r, w, d: w * (0.7 + rnd() * 0.6), h });
+    }
+    const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+    boxGeo.translate(0, 0.5, 0);
+    items.forEach((list, vi) => {
+      const { mat, roofMat } = this.facadeMats[vi];
+      const im = new THREE.InstancedMesh(boxGeo.clone(), [mat, mat, roofMat, roofMat, mat, mat], list.length);
+      list.forEach((it, k) => {
+        m4.compose(new THREE.Vector3(it.x, 0, it.z), new THREE.Quaternion(), new THREE.Vector3(it.w, it.h, it.d));
+        im.setMatrixAt(k, m4);
+      });
+      im.instanceMatrix.needsUpdate = true;
+      im.frustumCulled = false;
+      this.scene.add(im);
+    });
+  }
+
+  /* --------------------------- crosswalks + edge lines + parked cars */
+  _buildRoadMarkings() {
+    const { ROAD } = CITY;
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    // zebra stripes at every intersection approach
+    const stripes = [];
+    for (const Lx of this.roadLines) {
+      for (const Lz of this.roadLines) {
+        for (let side = 0; side < 4; side++) {
+          for (let t = -10; t <= 10; t += 2) {
+            stripes.push({ Lx, Lz, side, t });
+          }
+        }
+      }
+    }
+    const zebra = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(0.7, 3.6),
+      new THREE.MeshBasicMaterial({ color: 0xbac4ce, transparent: true, opacity: 0.22, depthWrite: false }),
+      stripes.length
+    );
+    stripes.forEach((sp, k) => {
+      const off = ROAD / 2 + 2.2;
+      let x, z, yaw;
+      if (sp.side === 0) { x = sp.Lx + sp.t; z = sp.Lz - off; yaw = 0; }
+      else if (sp.side === 1) { x = sp.Lx + sp.t; z = sp.Lz + off; yaw = 0; }
+      else if (sp.side === 2) { x = sp.Lx - off; z = sp.Lz + sp.t; yaw = Math.PI / 2; }
+      else { x = sp.Lx + off; z = sp.Lz + sp.t; yaw = Math.PI / 2; }
+      e.set(-Math.PI / 2, yaw, 0, 'YXZ'); q.setFromEuler(e);
+      m4.compose(new THREE.Vector3(x, 0.05, z), q, new THREE.Vector3(1, 1, 1));
+      zebra.setMatrixAt(k, m4);
+    });
+    zebra.instanceMatrix.needsUpdate = true;
+    zebra.frustumCulled = false;
+    this.scene.add(zebra);
+
+    // solid edge lines along every road
+    const { HALF, EXTENT } = CITY;
+    const geos = [];
+    for (const L of this.roadLines) {
+      for (const sd of [-1, 1]) {
+        const gx = new THREE.PlaneGeometry(EXTENT, 0.32);
+        gx.rotateX(-Math.PI / 2);
+        gx.translate(0, 0.045, L + sd * (ROAD / 2 - 0.7));
+        geos.push(gx);
+        const gz = new THREE.PlaneGeometry(0.32, EXTENT);
+        gz.rotateX(-Math.PI / 2);
+        gz.translate(L + sd * (ROAD / 2 - 0.7), 0.045, 0);
+        geos.push(gz);
+      }
+    }
+    const merged = mergeGeometries(geos, false);
+    const edges = new THREE.Mesh(merged, new THREE.MeshBasicMaterial({
+      color: 0x9aa4b0, transparent: true, opacity: 0.26, depthWrite: false,
+    }));
+    edges.frustumCulled = false;
+    this.scene.add(edges);
+    geos.forEach((g) => g.dispose());
+    void HALF;
+  }
+
+  _buildParked() {
+    const rnd = this.rnd;
+    const { ROAD } = CITY;
+    const geos = [];
+    const palette = [
+      [0.09, 0.10, 0.12], [0.16, 0.03, 0.04], [0.05, 0.08, 0.14],
+      [0.12, 0.12, 0.13], [0.04, 0.10, 0.08], [0.20, 0.18, 0.16],
+    ];
+    const push = (geo, color) => {
+      const col = new THREE.Color(...color);
+      const count = geo.attributes.position.count;
+      const arr = new Float32Array(count * 3);
+      for (let i = 0; i < count; i++) arr.set([col.r, col.g, col.b], i * 3);
+      geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+      geos.push(geo);
+    };
+    for (const L of this.roadLines) {
+      for (let p = -CITY.HALF + 30; p < CITY.HALF - 20; p += 57) {
+        for (const sd of [-1, 1]) {
+          if (rnd() < 0.45) continue;
+          const off = sd * (ROAD / 2 - 2.3);
+          const alongX = rnd() < 0.5;
+          const x = alongX ? p : L + off;
+          const z = alongX ? L + off : p;
+          const yaw = alongX ? Math.PI / 2 : 0;
+          const col = palette[(rnd() * palette.length) | 0];
+          const body = new THREE.BoxGeometry(1.8, 0.52, 4.4);
+          body.translate(0, 0.62, 0);
+          const cab = new THREE.BoxGeometry(1.6, 0.46, 2.2);
+          cab.translate(0, 1.1, -0.15);
+          body.rotateY(yaw); cab.rotateY(yaw);
+          body.translate(x, 0, z); cab.translate(x, 0, z);
+          push(body, col); push(cab, col.map((c) => c * 0.55));
+        }
+      }
+    }
+    const merged = mergeGeometries(geos, false);
+    const parked = new THREE.Mesh(merged, new THREE.MeshStandardMaterial({
+      vertexColors: true, metalness: 0.75, roughness: 0.32, envMapIntensity: 1.2,
+    }));
+    parked.frustumCulled = false;
+    this.scene.add(parked);
+    geos.forEach((g) => g.dispose());
+  }
+
+  /* ------------------------------------ billboard halos around lamps */
+  _buildHalos() {
+    const items = this.haloItems;
+    if (!items.length) return;
+    const geo = new THREE.PlaneGeometry(1, 1);
+    const colors = new Float32Array(items.length * 3);
+    const m4 = new THREE.Matrix4();
+    const mesh = new THREE.InstancedMesh(geo, new THREE.ShaderMaterial({
+      vertexShader: `
+        attribute vec3 aColor;
+        varying vec3 vColor;
+        varying vec2 vUv2;
+        void main() {
+          vec4 mv = viewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+          float sx = length(instanceMatrix[0].xyz);
+          float sy = length(instanceMatrix[1].xyz);
+          mv.xy += position.xy * vec2(sx, sy);
+          gl_Position = projectionMatrix * mv;
+          vColor = aColor;
+          vUv2 = uv;
+        }`,
+      fragmentShader: `
+        varying vec3 vColor;
+        varying vec2 vUv2;
+        void main() {
+          float d = length(vUv2 - 0.5) * 2.0;
+          float a = pow(max(0.0, 1.0 - d), 2.6);
+          gl_FragColor = vec4(vColor * a, a);
+        }`,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    }), items.length);
+    items.forEach((it, k) => {
+      m4.compose(new THREE.Vector3(it.x, it.y, it.z), new THREE.Quaternion(), new THREE.Vector3(it.s, it.s, it.s));
+      mesh.setMatrixAt(k, m4);
+      colors.set(it.c, k * 3);
+    });
+    geo.setAttribute('aColor', new THREE.InstancedBufferAttribute(colors, 3));
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.frustumCulled = false;
+    this.scene.add(mesh);
+    this.halos = mesh;
+  }
+
   /* ------------------------------------------------------------- rain */
   _buildRain() {
     const N = 2600;
@@ -775,6 +966,7 @@ export class City {
     this.lightDecals.material.opacity = [0.42, 0.5, 0.55, 0.6][tier];
     this.lightStreaks.visible = true;
     this.lightStreaks.material.opacity = [0.4, 0.48, 0.55, 0.6][tier];
+    if (this.halos) this.halos.visible = tier >= 1;
     this.stars.visible = tier >= 1;
     const dens = [0.0034, 0.0029, 0.0024, 0.0020][tier];
     this.scene.fog = new THREE.FogExp2(0x060a12, dens);

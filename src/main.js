@@ -11,7 +11,9 @@ import { Traffic } from './world/Traffic.js';
 import { Input } from './core/Input.js';
 import { AudioEngine } from './core/AudioEngine.js';
 import { QualityManager, TIER_SETTINGS, TIER_NAMES } from './core/QualityManager.js';
+import { Autopilot } from './core/Autopilot.js';
 import { HUD } from './ui/HUD.js';
+import { mulberry32 as mulberry } from './core/utils.js';
 
 const VignetteShader = {
   uniforms: {
@@ -40,6 +42,9 @@ const VignetteShader = {
       // vignette
       float v = smoothstep(0.92, 0.30, length(d) * 1.35);
       col *= mix(0.62, 1.0, v);
+      // subtle teal-shadow / warm-highlight grade
+      float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      col *= mix(vec3(0.82, 0.97, 1.10), vec3(1.08, 0.99, 0.90), smoothstep(0.02, 0.45, luma));
       // fine film grain
       float n = hash(uv * vec2(1920.0, 1080.0) + fract(uTime) * 137.0);
       col += (n - 0.5) * 0.028 * uIntensity;
@@ -75,6 +80,7 @@ class Game {
     this.camLook = new THREE.Vector3();
     this.started = false;
     this.time = 0;
+    this.autopilot = new Autopilot();
   }
 
   async boot() {
@@ -103,6 +109,47 @@ class Game {
       this.scene.environment = this.envRT.texture;
       pmrem.dispose();
     });
+    await step('Lakier i odbicia auta…', 88, () => {
+      // dedicated "night city studio" env for the car paint: dark dome with
+      // bright neon strips => clean lacquer with colourful streak reflections
+      const envScene = new THREE.Scene();
+      const dome = new THREE.Mesh(
+        new THREE.SphereGeometry(120, 24, 12),
+        new THREE.ShaderMaterial({
+          side: THREE.BackSide,
+          vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+          fragmentShader: `varying vec3 vD;
+            void main(){
+              vec3 c = mix(vec3(0.020,0.028,0.045), vec3(0.004,0.006,0.012), smoothstep(0.0,0.4,vD.y));
+              c += vec3(0.10,0.06,0.03) * pow(max(0.0,1.0-abs(vD.y)*4.0),2.0);
+              gl_FragColor = vec4(c,1.0);
+            }`,
+        })
+      );
+      envScene.add(dome);
+      const palette = [0xffb46b, 0x28d7fe, 0xff2d78, 0x9fffe0, 0xffe9c4, 0x7a8cff];
+      const rr = mulberry(9182);
+      for (let k = 0; k < 18; k++) {
+        const m = new THREE.Mesh(
+          new THREE.PlaneGeometry(26 + rr() * 30, 3 + rr() * 7),
+          new THREE.MeshBasicMaterial({ color: new THREE.Color().setHex(palette[k % palette.length]).multiplyScalar(2.6) })
+        );
+        const a = rr() * Math.PI * 2;
+        const y = -14 + rr() * 60;
+        m.position.set(Math.cos(a) * 80, y, Math.sin(a) * 80);
+        m.lookAt(0, y * 0.4, 0);
+        envScene.add(m);
+      }
+      const moonP = new THREE.Mesh(new THREE.SphereGeometry(6, 12, 12),
+        new THREE.MeshBasicMaterial({ color: new THREE.Color(6, 6, 6.5) }));
+      moonP.position.set(40, 80, -60);
+      envScene.add(moonP);
+      const pmrem2 = new THREE.PMREMGenerator(this.renderer);
+      this.carEnvRT = pmrem2.fromScene(envScene, 0.06, 1, 400);
+      pmrem2.dispose();
+      this.car.setEnvMaps(this.carEnvRT.texture, 2.6);
+      envScene.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    });
     await step('Prawie gotowe…', 92, () => {
       // place the chase camera behind the car before the first frame
       const fx = Math.sin(this.car.heading), fz = Math.cos(this.car.heading);
@@ -116,6 +163,7 @@ class Game {
         reset: () => this.resetCar(),
         help: () => this.toggleHelp(),
         quality: () => this.cycleQuality(),
+        auto: () => this.toggleAutopilot(),
       });
       this.applyTier(this.quality.tier, true);
       this.hud.buildStaticMap(this.city);
@@ -141,6 +189,14 @@ class Game {
       this.hud.toast('Miłej jazdy 🌃  (H — pomoc)');
     });
     document.getElementById('helpClose').addEventListener('click', () => this.toggleHelp(false));
+  }
+
+  toggleAutopilot(force) {
+    const on = force !== undefined ? force : !this.autopilot.enabled;
+    this.autopilot.enabled = on;
+    if (on) this.autopilot.snap(this.car);
+    document.getElementById('apBadge').classList.toggle('off', !on);
+    this.hud.toast(on ? '🤖 Autopilot włączony — dowolny klawisz jazdy przejmuje kontrolę' : 'Autopilot wyłączony');
   }
 
   toggleHelp(force) {
@@ -284,9 +340,14 @@ class Game {
       requestAnimationFrame(tick);
       const dt = Math.min(0.05, this.clock.getDelta());
       this.time += dt;
-      const input = this.started ? this.input.read() : {
+      let input = this.started ? this.input.read() : {
         throttle: 0, brake: 0, left: false, right: false, handbrake: false,
       };
+      if (this.autopilot.enabled) {
+        const manual = input.throttle || input.brake || input.left || input.right || input.handbrake;
+        if (manual) this.toggleAutopilot(false);
+        else input = this.autopilot.update(dt, this.car);
+      }
       this.car.update(dt, input, this.city);
       this.traffic.update(dt);
       this.city.update(dt, this.car.pos);

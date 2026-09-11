@@ -75,4 +75,24 @@ console.log(`straight 5 s: ${car.speedKmh.toFixed(0)} km/h at (${car.pos.x.toFix
 if (car.speedKmh < 90) throw new Error('car too slow after 5 s of throttle');
 if (Math.abs(car.pos.x - 57) > 2) throw new Error('car drifted off the straight road');
 
+// autopilot: 90 s of self-driving on the grid
+const { Autopilot } = await import('../src/core/Autopilot.js');
+const ap = new Autopilot();
+car.reset();
+car.pos.set(57, 0, 57);
+car.heading = Math.PI;
+ap.snap(car);
+let apStuck = 0;
+let minSpeed = 999;
+for (let i = 0; i < 60 * 90; i++) {
+  const ain = ap.update(dt, car);
+  if (ain.throttle && car.speedKmh < 5) apStuck++;
+  car.update(dt, ain, city);
+  if (i > 600) minSpeed = Math.min(minSpeed, car.speedKmh);
+  if (!isFinite(car.pos.x) || !isFinite(car.pos.z)) throw new Error('autopilot NaN');
+}
+console.log(`autopilot 90 s: ${car.speedKmh.toFixed(0)} km/h at (${car.pos.x.toFixed(0)}, ${car.pos.z.toFixed(0)}), slowFrames=${apStuck}`);
+if (Math.abs(car.pos.x) > CITY.HALF + 10 || Math.abs(car.pos.z) > CITY.HALF + 10) throw new Error('autopilot left the city');
+if (apStuck > 240) throw new Error('autopilot stuck too often');
+
 console.log('HEADLESS TEST PASSED ✔');
