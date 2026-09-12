@@ -1,0 +1,33 @@
+{
+  "name": "realisticcarnight",
+  "version": "1.0.0",
+  "description": "Najbardziej realistyczna gra do chillowania sobie jeżdżąc po oświetlonym ogromnym mieście z nieziemską grafiką jakiej nie ma nawet GTA, a na dodatek to wszystko w przeglądarce!",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test/headless.mjs",
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 5173"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rejson59/RealisticCarNight.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/rejson59/RealisticCarNight/issues"
+  },
+  "homepage": "https://github.com/rejson59/RealisticCarNight#readme",
+  "dependencies": {
+    "three": "^0.170.0",
+    "vite": "^5.4.11"
+  },
+  "type": "module",
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@napi-rs/canvas": "^1.0.9",
+    "eslint": "^9.39.5"
+  }
+}
