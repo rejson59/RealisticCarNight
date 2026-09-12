@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#05070d" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Realistic Car Night — nocne miasto w przeglądarce</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- loading -->
+  <div id="loading">
+    <div class="load-box">
+      <h1 class="logo">REALISTIC<span>CAR</span>NIGHT</h1>
+      <p class="tag">nocne miasto • mokry asfalt • neonowe odbicia</p>
+      <div class="bar"><div id="loadBar"></div></div>
+      <p id="loadStatus">Start…</p>
+    </div>
+  </div>
+
+  <!-- start screen -->
+  <div id="start" class="hidden">
+    <div class="start-box">
+      <h1 class="logo">REALISTIC<span>CAR</span>NIGHT</h1>
+      <p class="tag">Chill drive po oświetlonym mieście, odbicia neonów w mokrym asfalcie,<br/>deszcz na ULTRA, dynamiczne dopasowanie grafiki do Twojego urządzenia.</p>
+      <button id="startBtn">🌃 JEDŹ</button>
+      <p class="tiny">Kliknij, aby włączyć też dźwięk silnika</p>
+    </div>
+  </div>
+
+  <!-- HUD -->
+  <div id="hud">
+    <canvas id="minimap"></canvas>
+    <div id="topRight">
+      <div id="apBadge" class="off">AUTOPILOT</div>
+      <div id="tierBox">AUTO</div>
+      <div id="fpsBox">– FPS</div>
+    </div>
+    <canvas id="gauge"></canvas>
+    <div id="toast"></div>
+    <div id="kbhints">
+      <b>W/S</b> gaz/hamulec • <b>A/D</b> skręt • <b>SPACJA</b> handbrake •
+      <b>C</b> kamera • <b>R</b> reset • <b>M</b> dźwięk • <b>Q</b> jakość • <b>H</b> pomoc
+    </div>
+
+    <!-- touch controls -->
+    <div id="touch">
+      <div class="tc-left">
+        <button id="btn-left" class="tc-btn">◀</button>
+        <button id="btn-right" class="tc-btn">▶</button>
+      </div>
+      <div class="tc-right">
+        <button id="btn-hand" class="tc-btn small">DRIFT</button>
+        <button id="btn-brake" class="tc-btn">HAMULEC</button>
+        <button id="btn-gas" class="tc-btn gas">GAZ</button>
+      </div>
+    </div>
+
+    <div id="sideBtns">
+      <button id="btn-cam" title="Kamera (C)">🎥</button>
+      <button id="btn-sound" title="Dźwięk (M)">🔊</button>
+      <button id="btn-quality" title="Jakość (Q)">⚙️</button>
+      <button id="btn-auto" title="Autopilot (T)">🤖</button>
+      <button id="btn-help" title="Pomoc (H)">❔</button>
+    </div>
+  </div>
+
+  <!-- help -->
+  <div id="help" class="hidden">
+    <div class="help-box">
+      <h2>Sterowanie</h2>
+      <table>
+        <tr><td>W / S / strzałki</td><td>gaz / hamulec + wsteczny</td></tr>
+        <tr><td>A / D / strzałki</td><td>skręt</td></tr>
+        <tr><td>SPACJA</td><td>handbrake (drift)</td></tr>
+        <tr><td>C</td><td>zmiana kamery (pościg / maska)</td></tr>
+        <tr><td>R</td><td>reset na środek skrzyżowania</td></tr>
+        <tr><td>M</td><td>dźwięk wł./wył.</td></tr>
+        <tr><td>Q</td><td>cykl jakości: AUTO → NISKA → … → ULTRA</td></tr>
+        <tr><td>T / 🤖</td><td>autopilot — sam jeździ po mieście, dowolny klawisz jazdy go wyłącza</td></tr>
+        <tr><td>Telefon</td><td>przyciski na ekranie (gaz, hamulec, skręt, drift)</td></tr>
+      </table>
+      <p class="tiny">Grafika dopasowuje się sama do wydajności urządzenia (FPS), żeby nie przeciążać słabszych telefonów. Możesz też wymusić jakość klawiszem Q.</p>
+      <button id="helpClose">Zamknij</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
