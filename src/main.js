@@ -20,6 +20,7 @@ const VignetteShader = {
     tDiffuse: { value: null },
     uTime: { value: 0 },
     uIntensity: { value: 1.0 },
+    uBlur: { value: 0.0 },
   },
   vertexShader: `
     varying vec2 vUv;
@@ -28,17 +29,31 @@ const VignetteShader = {
     uniform sampler2D tDiffuse;
     uniform float uTime;
     uniform float uIntensity;
+    uniform float uBlur;
     varying vec2 vUv;
     float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
     void main(){
       vec2 uv = vUv;
       vec2 d = uv - 0.5;
-      // subtle chromatic aberration towards edges
       float ca = 0.0016 * uIntensity;
       vec3 col;
-      col.r = texture2D(tDiffuse, uv + d * ca).r;
-      col.g = texture2D(tDiffuse, uv).g;
-      col.b = texture2D(tDiffuse, uv - d * ca).b;
+      if (uBlur > 0.001) {
+        // radial speed blur (cheap motion blur at high speed), CA on the centre tap
+        vec2 dir = d * uBlur * 0.055;
+        vec3 acc = vec3(0.0);
+        acc.r = texture2D(tDiffuse, uv + d * ca).r;
+        acc.g = texture2D(tDiffuse, uv).g;
+        acc.b = texture2D(tDiffuse, uv - d * ca).b;
+        acc += texture2D(tDiffuse, uv - dir).rgb;
+        acc += texture2D(tDiffuse, uv - dir * 2.0).rgb;
+        acc += texture2D(tDiffuse, uv - dir * 3.0).rgb;
+        col = acc * 0.25;
+      } else {
+        // subtle chromatic aberration towards edges
+        col.r = texture2D(tDiffuse, uv + d * ca).r;
+        col.g = texture2D(tDiffuse, uv).g;
+        col.b = texture2D(tDiffuse, uv - d * ca).b;
+      }
       // vignette
       float v = smoothstep(0.92, 0.30, length(d) * 1.35);
       col *= mix(0.62, 1.0, v);
@@ -61,7 +76,7 @@ class Game {
     });
     this.renderer.setClearColor(0x05070d, 1);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.22;
+    this.renderer.toneMappingExposure = 1.15;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     // shadows update once per frame (the wet-mirror pass must not re-render them)
@@ -265,7 +280,7 @@ class Game {
     composer.addPass(new RenderPass(this.scene, this.camera));
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(Math.max(2, w * s.bloomScale), Math.max(2, h * s.bloomScale)),
-      s.bloom, 0.62, 0.45
+      s.bloom, 0.38, 0.8
     );
     composer.addPass(bloom);
     if (s.vignette) {
@@ -353,7 +368,12 @@ class Game {
       this.city.update(dt, this.car.pos);
       this._updateCamera(dt);
       this.audio.update(this.car, input, dt);
-      if (this.vigPass) this.vigPass.uniforms.uTime.value = this.time;
+      if (this.vigPass) {
+        this.vigPass.uniforms.uTime.value = this.time;
+        const kmhNow = this.car.speedKmh;
+        const wantBlur = this.quality.tier >= 2 ? Math.min(1, Math.max(0, (kmhNow - 80) / 140)) : 0;
+        this.vigPass.uniforms.uBlur.value += (wantBlur - this.vigPass.uniforms.uBlur.value) * Math.min(1, dt * 3);
+      }
 
       const res = this.quality.push(dt);
       if (res && res.changed) {

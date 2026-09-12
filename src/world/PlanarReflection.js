@@ -53,7 +53,7 @@ export class WetGroundReflection extends THREE.Mesh {
           uv.xy += ripple * vUv.w;
           vec3 refl = texture2DProj(tDiffuse, uv).rgb;
           vec3 blur = texture2DProj(tDiffuse, uv + vec4(1.7 / uRes.x, 1.7 / uRes.y, 0.0, 0.0) * vUv.w).rgb;
-          refl = mix(refl, blur, 0.4);
+          refl = mix(refl, blur, 0.28);
 
           vec3 V = normalize(cameraPosition - vWorld);
           float fres = pow(1.0 - clamp(V.y, 0.0, 1.0), 2.6);

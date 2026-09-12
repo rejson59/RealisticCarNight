@@ -270,7 +270,7 @@ export class City {
         map: v.map,
         emissiveMap: v.emi,
         emissive: 0xffffff,
-        emissiveIntensity: 1.45,
+        emissiveIntensity: 1.25,
         roughness: 0.42,
         metalness: 0.55,
         envMapIntensity: 0.8,
@@ -409,7 +409,7 @@ export class City {
     );
     const head = new THREE.InstancedMesh(
       new THREE.BoxGeometry(0.5, 0.16, 1.1),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(3.4, 2.9, 2.1) }),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.3, 1.7) }),
       n
     );
     const poolTex = canvasTexture(poolStreakTexture());
@@ -443,7 +443,7 @@ export class City {
       arm.setMatrixAt(k, m4);
       m4.compose(new THREE.Vector3(hx, 7.86, hz), q, new THREE.Vector3(1, 1, 1));
       head.setMatrixAt(k, m4);
-      this.haloItems.push({ x: hx, y: 7.8, z: hz, c: [2.6, 2.1, 1.4], s: 3.6 });
+      this.haloItems.push({ x: hx, y: 7.8, z: hz, c: [1.5, 1.2, 0.8], s: 2.6 });
       // combined pool+streak decal lies ALONG the road axis
       e.set(-Math.PI / 2, p.axisX ? Math.PI / 2 : 0, 0, 'YXZ'); q.setFromEuler(e);
       m4.compose(new THREE.Vector3(hx, 0.16, hz), q, new THREE.Vector3(1, 1, 1));
@@ -460,19 +460,21 @@ export class City {
   /* -------------------------------------------------- traffic lights */
   _buildTrafficLights() {
     const { ROAD } = CITY;
-    const rnd = this.rnd;
-    const heads = { g: [], r: [], y: [] };
-    const poles = [];
-    for (const Lx of this.roadLines) {
-      for (const Lz of this.roadLines) {
+    const heads = [];
+    for (let ii = 0; ii < this.roadLines.length; ii++) {
+      for (let jj = 0; jj < this.roadLines.length; jj++) {
+        const Lx = this.roadLines[ii], Lz = this.roadLines[jj];
+        const key = ii * 31 + jj * 7;
+        let h = 0;
         for (let cx = -1; cx <= 1; cx += 2) {
           for (let cz = -1; cz <= 1; cz += 2) {
-            const x = Lx + cx * (ROAD / 2 - 1.1);
-            const z = Lz + cz * (ROAD / 2 - 1.1);
-            poles.push({ x, z });
-            const r = rnd();
-            const bucket = r < 0.68 ? heads.g : r < 0.9 ? heads.r : heads.y;
-            bucket.push({ x, z });
+            heads.push({
+              x: Lx + cx * (ROAD / 2 - 1.1),
+              z: Lz + cz * (ROAD / 2 - 1.1),
+              axis: (h % 2 === 0) ? 'x' : 'z',
+              key,
+            });
+            h++;
           }
         }
       }
@@ -481,26 +483,53 @@ export class City {
     const poleMesh = new THREE.InstancedMesh(
       new THREE.CylinderGeometry(0.09, 0.11, 4.6, 5),
       new THREE.MeshStandardMaterial({ color: 0x14171b, roughness: 0.6, metalness: 0.5 }),
-      poles.length
+      heads.length
     );
-    poles.forEach((p, k) => { m4.setPosition(p.x, 2.3, p.z); poleMesh.setMatrixAt(k, m4); });
+    heads.forEach((p, k) => { m4.setPosition(p.x, 2.3, p.z); poleMesh.setMatrixAt(k, m4); });
     poleMesh.instanceMatrix.needsUpdate = true;
     this.scene.add(poleMesh);
 
-    const colors = { g: new THREE.Color(0.35, 4.0, 1.6), r: new THREE.Color(4.0, 0.15, 0.15), y: new THREE.Color(4.0, 2.2, 0.2) };
-    const haloC = { g: [0.25, 2.6, 1.0], r: [2.6, 0.12, 0.12], y: [2.6, 1.4, 0.12] };
-    const hg = new THREE.BoxGeometry(0.24, 0.62, 0.24);
-    for (const key of ['g', 'r', 'y']) {
-      const items = heads[key];
-      if (!items.length) continue;
-      const mesh = new THREE.InstancedMesh(hg, new THREE.MeshBasicMaterial({ color: colors[key] }), items.length);
-      items.forEach((p, k) => {
-        m4.setPosition(p.x, 4.35, p.z); mesh.setMatrixAt(k, m4);
-        this.haloItems.push({ x: p.x, y: 4.35, z: p.z, c: haloC[key], s: 2.0 });
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      this.scene.add(mesh);
+    const headMesh = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.24, 0.62, 0.24),
+      new THREE.MeshBasicMaterial({ color: 0xffffff }),
+      heads.length
+    );
+    heads.forEach((p, k) => {
+      m4.setPosition(p.x, 4.35, p.z);
+      headMesh.setMatrixAt(k, m4);
+      headMesh.setColorAt(k, new THREE.Color(0.3, 2.4, 1.0));
+    });
+    headMesh.instanceMatrix.needsUpdate = true;
+    if (headMesh.instanceColor) headMesh.instanceColor.needsUpdate = true;
+    this.scene.add(headMesh);
+    this.tlHeads = heads;
+    this.tlMesh = headMesh;
+    this.tlStates = new Map();
+  }
+
+  /** green -> yellow -> red cycle, cross directions offset by half phase */
+  _updateTrafficLights(time) {
+    if (!this.tlMesh) return;
+    const CYC = 16;
+    const stateAt = (t) => (t < 7 ? 0 : t < 8.5 ? 1 : 2); // 0 g, 1 y, 2 r
+    const cols = [
+      [0.3, 2.4, 1.0], [2.2, 1.3, 0.08], [2.0, 0.08, 0.08],
+    ];
+    const c = new THREE.Color();
+    let dirty = false;
+    for (let k = 0; k < this.tlHeads.length; k++) {
+      const hd = this.tlHeads[k];
+      const ph = (time + hd.key * 0.37) % CYC;
+      const base = stateAt(ph);
+      const st = hd.axis === 'x' ? base : stateAt((ph + CYC / 2) % CYC);
+      if (this.tlStates.get(k) !== st) {
+        this.tlStates.set(k, st);
+        c.setRGB(...cols[st]);
+        this.tlMesh.setColorAt(k, c);
+        dirty = true;
+      }
     }
+    if (dirty && this.tlMesh.instanceColor) this.tlMesh.instanceColor.needsUpdate = true;
   }
 
   /* ------------------------------------------- neon signs & billboards */
@@ -573,7 +602,7 @@ export class City {
     if (quads.length) {
       const merged = mergeGeometries(quads, false);
       const neon = new THREE.Mesh(merged, new THREE.MeshBasicMaterial({
-        map: atlas, color: new THREE.Color(2.3, 2.3, 2.4), fog: true,
+        map: atlas, color: new THREE.Color(1.9, 1.9, 2.0), fog: true,
       }));
       neon.frustumCulled = false;
       this.scene.add(neon);
@@ -607,7 +636,7 @@ export class City {
 
     const deckMat = new THREE.MeshStandardMaterial({ color: 0x0c0e12, roughness: 0.5, metalness: 0.4, side: THREE.DoubleSide, envMapIntensity: 0.7 });
     const barrierMat = new THREE.MeshStandardMaterial({ color: 0x181c22, roughness: 0.6, metalness: 0.4, side: THREE.DoubleSide });
-    const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 2.2, 1.4), side: THREE.DoubleSide });
+    const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.11, 1.6, 1.05), side: THREE.DoubleSide });
 
     const buildRibbon = (curve, closed) => {
       const M = closed ? 260 : 160;
@@ -953,7 +982,7 @@ export class City {
     refl.material.uniforms.uStrength.value = reflCfg.str;
     this.rain.visible = tier >= 3;
     this.lightDecals.visible = true;
-    this.lightDecals.material.opacity = [0.5, 0.55, 0.6, 0.65][tier];
+    this.lightDecals.material.opacity = [0.35, 0.4, 0.45, 0.5][tier];
     if (this.halos) this.halos.visible = tier >= 1;
     this.stars.visible = tier >= 1;
     const dens = [0.0034, 0.0029, 0.0024, 0.0020][tier];
@@ -982,6 +1011,7 @@ export class City {
   /* ------------------------------------------------------------ update */
   update(dt, carPos) {
     this.time += dt;
+    this._updateTrafficLights(this.time);
     this.reflection.material.uniforms.uTime.value = this.time;
 
     // blinking aviation beacons

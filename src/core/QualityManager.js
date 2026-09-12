@@ -2,19 +2,19 @@ export const TIER_NAMES = ['NISKA', 'ŚREDNIA', 'WYSOKA', 'ULTRA'];
 
 export const TIER_SETTINGS = [
   { // 0 LOW — weak phones
-    pixelRatio: 0.8, bloom: 0.65, bloomScale: 0.25, msaa: 0, traffic: 4,
+    pixelRatio: 0.8, bloom: 0.5, bloomScale: 0.25, msaa: 0, traffic: 4,
     env: 0.35, shadows: false, vignette: false,
   },
   { // 1 MEDIUM
-    pixelRatio: 1.2, bloom: 0.8, bloomScale: 0.35, msaa: 0, traffic: 7,
+    pixelRatio: 1.2, bloom: 0.62, bloomScale: 0.35, msaa: 0, traffic: 7,
     env: 0.45, shadows: false, vignette: true,
   },
   { // 2 HIGH
-    pixelRatio: 1.6, bloom: 0.95, bloomScale: 0.5, msaa: 4, traffic: 12,
+    pixelRatio: 1.6, bloom: 0.75, bloomScale: 0.5, msaa: 4, traffic: 12,
     env: 0.6, shadows: true, vignette: true,
   },
   { // 3 ULTRA
-    pixelRatio: 2.0, bloom: 1.05, bloomScale: 0.6, msaa: 4, traffic: 16,
+    pixelRatio: 2.0, bloom: 0.85, bloomScale: 0.6, msaa: 4, traffic: 16,
     env: 0.75, shadows: true, vignette: true,
   },
 ];

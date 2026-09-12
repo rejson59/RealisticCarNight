@@ -160,7 +160,7 @@ export class Car {
     }
 
     // -------------------------------------------------- lights (real)
-    this.spotL = new THREE.SpotLight(0xcfe0ff, 420, 130, 0.58, 0.6, 1.35);
+    this.spotL = new THREE.SpotLight(0xcfe0ff, 260, 130, 0.58, 0.75, 1.45);
     this.spotR = this.spotL.clone();
     this.spotL.position.set(-0.62, 0.8, 2.2);
     this.spotR.position.set(0.62, 0.8, 2.2);
@@ -180,13 +180,33 @@ export class Car {
       new THREE.PlaneGeometry(9, 16),
       new THREE.MeshBasicMaterial({
         map: canvasTexture(headlightPoolTexture()), transparent: true,
-        blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.3,
+        blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.22,
       })
     );
     spill.rotation.x = -Math.PI / 2;
     spill.position.set(0, 0.16, 9.0);
     this.group.add(spill);
     this.spill = spill;
+
+    // -------------------------------------------------- drift smoke
+    const SN = 96;
+    this.smoke = {
+      n: SN, head: 0,
+      pos: new Float32Array(SN * 3),
+      col: new Float32Array(SN * 3),
+      vel: new Float32Array(SN * 3),
+      life: new Float32Array(SN),
+      max: new Float32Array(SN),
+    };
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(this.smoke.pos, 3));
+    sg.setAttribute('color', new THREE.BufferAttribute(this.smoke.col, 3));
+    this.smokePts = new THREE.Points(sg, new THREE.PointsMaterial({
+      size: 0.9, vertexColors: true, transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, sizeAttenuation: true,
+    }));
+    this.smokePts.frustumCulled = false;
+    scene.add(this.smokePts);
 
     // -------------------------------------------------- state
     this.pos = new THREE.Vector3(57, 0, 57);
@@ -305,10 +325,44 @@ export class Car {
     }
     for (const n of this.steerNodes) n.rotation.y = this.steer * 0.42 / (1 + Math.pow(speed / 30, 1.2));
 
+    // drift smoke
+    const sliding = Math.abs(this.vl) > 3.5 || (input.handbrake && Math.abs(this.vf) > 10);
+    if (sliding && Math.abs(this.vf) > 7) {
+      for (const sx of [-0.84, 0.84]) {
+        const smp = this.smoke;
+        const i = smp.head; smp.head = (smp.head + 1) % smp.n;
+        const wx = this.pos.x + rx * sx - fx * 1.42;
+        const wz = this.pos.z + rz * sx - fz * 1.42;
+        smp.pos[i * 3] = wx; smp.pos[i * 3 + 1] = 0.25; smp.pos[i * 3 + 2] = wz;
+        smp.vel[i * 3] = -fx * 2 + (Math.random() - 0.5) * 1.5;
+        smp.vel[i * 3 + 1] = 0.7 + Math.random() * 0.9;
+        smp.vel[i * 3 + 2] = -fz * 2 + (Math.random() - 0.5) * 1.5;
+        smp.max[i] = smp.life[i] = 0.55 + Math.random() * 0.5;
+      }
+    }
+    {
+      const smp = this.smoke;
+      for (let i = 0; i < smp.n; i++) {
+        if (smp.life[i] > 0) {
+          smp.life[i] -= dt;
+          smp.pos[i * 3] += smp.vel[i * 3] * dt;
+          smp.pos[i * 3 + 1] += smp.vel[i * 3 + 1] * dt;
+          smp.pos[i * 3 + 2] += smp.vel[i * 3 + 2] * dt;
+          smp.vel[i * 3] *= 0.94; smp.vel[i * 3 + 2] *= 0.94;
+          const f = Math.max(0, smp.life[i] / smp.max[i]) * 0.09;
+          smp.col[i * 3] = f * 0.8; smp.col[i * 3 + 1] = f * 0.85; smp.col[i * 3 + 2] = f;
+        } else {
+          smp.col[i * 3] = 0; smp.col[i * 3 + 1] = 0; smp.col[i * 3 + 2] = 0;
+        }
+      }
+      this.smokePts.geometry.attributes.position.needsUpdate = true;
+      this.smokePts.geometry.attributes.color.needsUpdate = true;
+    }
+
     // lights state
     const braking = input.brake > 0.05 || input.handbrake;
-    this.tailMat.color.setRGB(braking ? 5.0 : 3.0, braking ? 0.18 : 0.12, braking ? 0.2 : 0.15);
-    this.brakeLight.intensity = braking ? 6 : 1.6;
+    this.tailMat.color.setRGB(braking ? 4.0 : 2.6, braking ? 0.15 : 0.1, braking ? 0.17 : 0.13);
+    this.brakeLight.intensity = braking ? 4 : 1.2;
     const reverse = this.vf < -0.4;
     void reverse;
 

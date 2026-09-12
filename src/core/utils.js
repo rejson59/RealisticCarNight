@@ -17,7 +17,7 @@ export function makeCanvas(w, h) {
   return c;
 }
 
-export function canvasTexture(canvas, { repeat = null, srgb = true, aniso = 4 } = {}) {
+export function canvasTexture(canvas, { repeat = null, srgb = true, aniso = 8 } = {}) {
   const t = new THREE.CanvasTexture(canvas);
   if (srgb) t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = aniso;
@@ -213,8 +213,8 @@ export function headlightPoolTexture() {
   const c = makeCanvas(256, 256);
   const g = c.getContext('2d');
   const grad = g.createRadialGradient(128, 128, 4, 128, 128, 128);
-  grad.addColorStop(0, 'rgba(225,238,255,0.55)');
-  grad.addColorStop(0.35, 'rgba(205,225,255,0.20)');
+  grad.addColorStop(0, 'rgba(225,238,255,0.4)');
+  grad.addColorStop(0.35, 'rgba(205,225,255,0.14)');
   grad.addColorStop(0.7, 'rgba(190,215,255,0.06)');
   grad.addColorStop(1, 'rgba(180,210,255,0)');
   g.fillStyle = grad;
@@ -228,8 +228,8 @@ export function poolStreakTexture() {
   const g = c.getContext('2d');
   // pool (top-down radial)
   const pool = g.createRadialGradient(64, 128, 4, 64, 128, 62);
-  pool.addColorStop(0, 'rgba(255,214,150,0.75)');
-  pool.addColorStop(0.45, 'rgba(255,190,120,0.22)');
+  pool.addColorStop(0, 'rgba(255,214,150,0.5)');
+  pool.addColorStop(0.45, 'rgba(255,190,120,0.14)');
   pool.addColorStop(1, 'rgba(255,180,100,0)');
   g.fillStyle = pool;
   g.save();
@@ -241,7 +241,7 @@ export function poolStreakTexture() {
   for (let x = 0; x < 128; x++) {
     const fx = (x - 64) / 64;
     const a = Math.exp(-fx * fx * 7.0);
-    g.fillStyle = `rgba(255,216,165,${(a * 0.4).toFixed(3)})`;
+    g.fillStyle = `rgba(255,216,165,${(a * 0.28).toFixed(3)})`;
     g.fillRect(x, 0, 1, 256);
   }
   // fade both ends
