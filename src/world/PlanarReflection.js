@@ -58,8 +58,9 @@ export class WetGroundReflection extends THREE.Mesh {
           vec3 V = normalize(cameraPosition - vWorld);
           float fres = pow(1.0 - clamp(V.y, 0.0, 1.0), 2.6);
 
-          float wet = mix(0.14, 1.0, puddle);
-          float strength = uStrength * (0.16 + 0.84 * fres) * (0.25 + 0.75 * wet);
+          // whole road is wet at night (reference look), puddles are mirrors
+          float wet = mix(0.42, 1.0, puddle);
+          float strength = uStrength * (0.20 + 0.80 * fres) * (0.35 + 0.65 * wet);
           strength = clamp(strength, 0.0, 0.94);
 
           gl_FragColor = vec4(refl * strength * 1.12, strength);
@@ -81,6 +82,8 @@ export class WetGroundReflection extends THREE.Mesh {
     this.virtualCamera = new THREE.PerspectiveCamera();
     this.clipBias = 0.003;
     this.enabled = true;
+    this.frameInterval = 1; // re-render the mirror every N frames (perf)
+    this._frame = 0;
 
     this._reflectorWorldPosition = new THREE.Vector3();
     this._cameraWorldPosition = new THREE.Vector3();
@@ -101,6 +104,8 @@ export class WetGroundReflection extends THREE.Mesh {
 
   onBeforeRender(renderer, scene, camera) {
     if (!this.enabled || !this.visible) return;
+    this._frame += 1;
+    const skipRender = this._frame % this.frameInterval !== 0;
 
     const rp = this._reflectorWorldPosition.setFromMatrixPosition(this.matrixWorld);
     const cp = this._cameraWorldPosition.setFromMatrixPosition(camera.matrixWorld);
@@ -158,6 +163,7 @@ export class WetGroundReflection extends THREE.Mesh {
     projectionMatrix.elements[10] = clipPlane.z + 1.0 - this.clipBias;
     projectionMatrix.elements[14] = clipPlane.w;
 
+    if (skipRender) return; // reuse the previous mirror frame
     this.visible = false;
     const prevTarget = renderer.getRenderTarget();
     const prevClearColor = renderer.getClearColor(new THREE.Color());

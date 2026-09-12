@@ -2,11 +2,11 @@ export const TIER_NAMES = ['NISKA', 'ŚREDNIA', 'WYSOKA', 'ULTRA'];
 
 export const TIER_SETTINGS = [
   { // 0 LOW — weak phones
-    pixelRatio: 0.8, bloom: 0.65, bloomScale: 0.3, msaa: 0, traffic: 4,
+    pixelRatio: 0.8, bloom: 0.65, bloomScale: 0.25, msaa: 0, traffic: 4,
     env: 0.35, shadows: false, vignette: false,
   },
   { // 1 MEDIUM
-    pixelRatio: 1.2, bloom: 0.8, bloomScale: 0.4, msaa: 0, traffic: 7,
+    pixelRatio: 1.2, bloom: 0.8, bloomScale: 0.35, msaa: 0, traffic: 7,
     env: 0.45, shadows: false, vignette: true,
   },
   { // 2 HIGH
@@ -23,6 +23,7 @@ export const TIER_SETTINGS = [
 export class QualityManager {
   constructor() {
     this.tier = QualityManager.detect();
+    this.resScale = 1;
     this.auto = true;
     this.samples = [];
     this.window = 0;
@@ -75,11 +76,23 @@ export class QualityManager {
     if (this.history.length > 40) this.history.shift();
     if (this.cooldown > 0) return null;
 
-    if (fps < 44 && this.tier > 0) {
-      this.tier -= 1;
+    if (fps < 44) {
+      if (this.tier > 0) {
+        this.tier -= 1;
+        this.cooldown = 6;
+        this.goodStreak = 0;
+        return { tier: this.tier, auto: true, changed: true, reason: 'fps' };
+      }
+      if (this.resScale > 0.72) {
+        this.resScale = 0.72; // dynamic resolution rescue for very weak GPUs
+        this.cooldown = 6;
+        return { tier: this.tier, auto: true, changed: true, reason: 'res' };
+      }
+    }
+    if (fps > 56 && this.resScale < 1) {
+      this.resScale = 1;
       this.cooldown = 6;
-      this.goodStreak = 0;
-      return { tier: this.tier, auto: true, changed: true, reason: 'fps' };
+      return { tier: this.tier, auto: true, changed: true, reason: 'res' };
     }
     if (fps > 56) this.goodStreak += 1;
     else this.goodStreak = 0;

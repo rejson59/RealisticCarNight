@@ -222,6 +222,41 @@ export function headlightPoolTexture() {
   return c;
 }
 
+/** light pool + vertical wet streak in ONE decal (fewer additive quads) */
+export function poolStreakTexture() {
+  const c = makeCanvas(128, 256);
+  const g = c.getContext('2d');
+  // pool (top-down radial)
+  const pool = g.createRadialGradient(64, 128, 4, 64, 128, 62);
+  pool.addColorStop(0, 'rgba(255,214,150,0.75)');
+  pool.addColorStop(0.45, 'rgba(255,190,120,0.22)');
+  pool.addColorStop(1, 'rgba(255,180,100,0)');
+  g.fillStyle = pool;
+  g.save();
+  g.translate(0, 0);
+  g.scale(1, 1);
+  g.beginPath(); g.ellipse(64, 128, 62, 46, 0, 0, Math.PI * 2); g.fill();
+  g.restore();
+  // vertical streak along the decal's length
+  for (let x = 0; x < 128; x++) {
+    const fx = (x - 64) / 64;
+    const a = Math.exp(-fx * fx * 7.0);
+    g.fillStyle = `rgba(255,216,165,${(a * 0.4).toFixed(3)})`;
+    g.fillRect(x, 0, 1, 256);
+  }
+  // fade both ends
+  const fade = g.createLinearGradient(0, 0, 0, 256);
+  fade.addColorStop(0, 'rgba(0,0,0,1)');
+  fade.addColorStop(0.18, 'rgba(0,0,0,0)');
+  fade.addColorStop(0.82, 'rgba(0,0,0,0)');
+  fade.addColorStop(1, 'rgba(0,0,0,1)');
+  g.globalCompositeOperation = 'destination-out';
+  g.fillStyle = fade;
+  g.fillRect(0, 0, 128, 256);
+  g.globalCompositeOperation = 'source-over';
+  return c;
+}
+
 /** vertical wet-road light streak (used under street lamps) */
 export function streakTexture() {
   const c = makeCanvas(64, 256);

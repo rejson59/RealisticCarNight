@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
   mulberry32, facadeTextures, neonAtlas, asphaltTextures,
-  canvasTexture, lightPoolTexture, radialTexture, streakTexture,
+  canvasTexture, radialTexture, poolStreakTexture,
 } from '../core/utils.js';
 import { WetGroundReflection } from './PlanarReflection.js';
 
@@ -412,20 +412,12 @@ export class City {
       new THREE.MeshBasicMaterial({ color: new THREE.Color(3.4, 2.9, 2.1) }),
       n
     );
-    const poolTex = canvasTexture(lightPoolTexture());
+    const poolTex = canvasTexture(poolStreakTexture());
     const decal = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(17, 12),
+      new THREE.PlaneGeometry(15, 34),
       new THREE.MeshBasicMaterial({
         map: poolTex, transparent: true, blending: THREE.AdditiveBlending,
         depthWrite: false, color: 0xffc98a, opacity: 0.55,
-      }),
-      n
-    );
-    const streak = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(3.4, 34),
-      new THREE.MeshBasicMaterial({
-        map: canvasTexture(streakTexture()), transparent: true, blending: THREE.AdditiveBlending,
-        depthWrite: false, color: 0xffd9a8, opacity: 0.5,
       }),
       n
     );
@@ -451,22 +443,18 @@ export class City {
       arm.setMatrixAt(k, m4);
       m4.compose(new THREE.Vector3(hx, 7.86, hz), q, new THREE.Vector3(1, 1, 1));
       head.setMatrixAt(k, m4);
-      this.haloItems.push({ x: hx, y: 7.8, z: hz, c: [2.6, 2.1, 1.4], s: 5.0 });
-      e.set(-Math.PI / 2, p.axisX ? 0 : Math.PI / 2, 0, 'YXZ'); q.setFromEuler(e);
+      this.haloItems.push({ x: hx, y: 7.8, z: hz, c: [2.6, 2.1, 1.4], s: 3.6 });
+      // combined pool+streak decal lies ALONG the road axis
+      e.set(-Math.PI / 2, p.axisX ? Math.PI / 2 : 0, 0, 'YXZ'); q.setFromEuler(e);
       m4.compose(new THREE.Vector3(hx, 0.16, hz), q, new THREE.Vector3(1, 1, 1));
       decal.setMatrixAt(k, m4);
-      // streak lies ALONG the road axis
-      e.set(-Math.PI / 2, p.axisX ? Math.PI / 2 : 0, 0, 'YXZ'); q.setFromEuler(e);
-      m4.compose(new THREE.Vector3(hx, 0.14, hz), q, new THREE.Vector3(1, 1, 1));
-      streak.setMatrixAt(k, m4);
     });
-    [pole, arm, head, decal, streak].forEach((mesh) => {
+    [pole, arm, head, decal].forEach((mesh) => {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.frustumCulled = false;
       this.scene.add(mesh);
     });
     this.lightDecals = decal;
-    this.lightStreaks = streak;
   }
 
   /* -------------------------------------------------- traffic lights */
@@ -619,7 +607,7 @@ export class City {
 
     const deckMat = new THREE.MeshStandardMaterial({ color: 0x0c0e12, roughness: 0.5, metalness: 0.4, side: THREE.DoubleSide, envMapIntensity: 0.7 });
     const barrierMat = new THREE.MeshStandardMaterial({ color: 0x181c22, roughness: 0.6, metalness: 0.4, side: THREE.DoubleSide });
-    const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.12, 1.7, 1.1), side: THREE.DoubleSide });
+    const glowMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.15, 2.2, 1.4), side: THREE.DoubleSide });
 
     const buildRibbon = (curve, closed) => {
       const M = closed ? 260 : 160;
@@ -952,20 +940,20 @@ export class City {
   setQuality(tier) {
     this.tier = tier;
     const refl = this.reflection;
-    if (tier >= 2) {
-      refl.visible = true;
-      refl.enabled = true;
-      refl.setResolution(tier >= 3 ? 1024 : 512);
-      refl.material.uniforms.uStrength.value = tier >= 3 ? 1.0 : 0.85;
-    } else {
-      refl.visible = false;
-      refl.enabled = false;
-    }
+    refl.visible = true;
+    refl.enabled = true;
+    const reflCfg = [
+      { res: 192, interval: 4, str: 0.8 },
+      { res: 320, interval: 2, str: 0.9 },
+      { res: 512, interval: 2, str: 0.95 },
+      { res: 1024, interval: 1, str: 1.0 },
+    ][tier];
+    refl.setResolution(reflCfg.res);
+    refl.frameInterval = reflCfg.interval;
+    refl.material.uniforms.uStrength.value = reflCfg.str;
     this.rain.visible = tier >= 3;
     this.lightDecals.visible = true;
-    this.lightDecals.material.opacity = [0.42, 0.5, 0.55, 0.6][tier];
-    this.lightStreaks.visible = true;
-    this.lightStreaks.material.opacity = [0.4, 0.48, 0.55, 0.6][tier];
+    this.lightDecals.material.opacity = [0.5, 0.55, 0.6, 0.65][tier];
     if (this.halos) this.halos.visible = tier >= 1;
     this.stars.visible = tier >= 1;
     const dens = [0.0034, 0.0029, 0.0024, 0.0020][tier];

@@ -44,7 +44,7 @@ const VignetteShader = {
       col *= mix(0.62, 1.0, v);
       // subtle teal-shadow / warm-highlight grade
       float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
-      col *= mix(vec3(0.82, 0.97, 1.10), vec3(1.08, 0.99, 0.90), smoothstep(0.02, 0.45, luma));
+      col *= mix(vec3(0.80, 1.02, 1.06), vec3(1.07, 0.99, 0.91), smoothstep(0.02, 0.45, luma));
       // fine film grain
       float n = hash(uv * vec2(1920.0, 1080.0) + fract(uTime) * 137.0);
       col += (n - 0.5) * 0.028 * uIntensity;
@@ -237,7 +237,7 @@ class Game {
   /* ------------------------------------------------------------ tiers */
   applyTier(tier, first = false) {
     const s = TIER_SETTINGS[tier];
-    const dpr = Math.min(window.devicePixelRatio || 1, s.pixelRatio);
+    const dpr = Math.min(window.devicePixelRatio || 1, s.pixelRatio) * (this.quality.resScale || 1);
     this.renderer.setPixelRatio(dpr);
     this.renderer.shadowMap.enabled = s.shadows;
     this.city.setQuality(tier);
@@ -287,7 +287,7 @@ class Game {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
     const s = TIER_SETTINGS[this.quality.tier];
-    const dpr = Math.min(window.devicePixelRatio || 1, s.pixelRatio);
+    const dpr = Math.min(window.devicePixelRatio || 1, s.pixelRatio) * (this.quality.resScale || 1);
     this.composer?.setSize(w, h);
     this.composer?.setPixelRatio(dpr);
   }
@@ -298,13 +298,13 @@ class Game {
     const kmh = car.speedKmh;
     const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
     if (this.camMode === 0) {
-      const dist = 7.4 + kmh * 0.045;
-      const height = 2.7 + kmh * 0.010;
+      const dist = 6.3 + kmh * 0.040;
+      const height = 2.05 + kmh * 0.008;
       const desired = new THREE.Vector3(
         car.pos.x - fx * dist, height, car.pos.z - fz * dist
       );
       const look = new THREE.Vector3(
-        car.pos.x + fx * (6 + kmh * 0.06), 1.15, car.pos.z + fz * (6 + kmh * 0.06)
+        car.pos.x + fx * (6.5 + kmh * 0.06), 1.0, car.pos.z + fz * (6.5 + kmh * 0.06)
       );
       const k = 1 - Math.exp(-dt * 4.6);
       const kl = 1 - Math.exp(-dt * 7.5);
