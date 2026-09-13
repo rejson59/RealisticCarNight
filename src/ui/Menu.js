@@ -159,18 +159,21 @@ export class Menu {
     return sel;
   }
 
-  _toggle(parent, { label, key, hint }) {
+  _toggle(parent, { label, key, hint, disabled = false, disabledHint = '' }) {
     const r = el('div', 'row toggle-row');
     const left = el('div', null);
     left.appendChild(el('span', 'lbl', label));
     if (hint) left.appendChild(el('p', 'hint', hint));
+    if (disabled && disabledHint) left.appendChild(el('p', 'hint', disabledHint));
     r.appendChild(left);
     const sw = el('button', 'switch');
-    const on = !!this.settings.get(key);
+    const on = !!this.settings.get(key) && !disabled;
     sw.classList.toggle('on', on);
+    sw.classList.toggle('disabled', disabled);
     sw.innerHTML = '<i></i>';
     sw.setAttribute('aria-pressed', String(on));
-    sw.addEventListener('click', () => this._set(key, !on));
+    if (disabled) sw.setAttribute('aria-disabled', 'true');
+    else sw.addEventListener('click', () => this._set(key, !on));
     r.appendChild(sw);
     parent.appendChild(r);
     return sw;
@@ -240,20 +243,27 @@ export class Menu {
     const pipe = this._section('Potok renderowania',
       'Scena rysowana jest w niższej rozdzielczości wewnętrznej i rekonstruowana czasowo (jitter + historia + clip wariancji), '
       + 'a na końcu ostrzona CAS i oceniana lutem 3D — ta sama rodzina technik co DLSS/FSR. Wyłączenie wraca do natywnej rozdzielczości z MSAA.');
+    // the quality tier is the ceiling: switches only take effects away, and the
+    // ones this tier does not offer at all are shown greyed out
+    const av = this.stats?.()?.available || { taa: true, ao: true, dof: true };
+    const need = 'Włącz dostępne dopiero od poziomu WYSOKA (Q lub lista powyżej).';
     this._toggle(pipe, {
       label: 'Skalowanie czasowe (TAA)',
       key: 'upscale',
       hint: 'Więcej FPS przy tej samej ostrości. Wyłączone = natywna rozdzielczość + MSAA.',
+      disabled: !av.taa, disabledHint: need,
     });
     this._toggle(pipe, {
       label: 'Ambient Occlusion',
       key: 'ao',
       hint: 'Miękkie cienie kontaktowe w szczelinach, pod autem i przy krawężnikach.',
+      disabled: !av.ao, disabledHint: need,
     });
     this._toggle(pipe, {
       label: 'Głębia ostrości (bokeh)',
       key: 'dof',
       hint: 'Delikatne rozmycie tła — oddziela auto od neonów, świetne w trybie foto.',
+      disabled: !av.dof, disabledHint: need,
     });
     this._select(pipe, { label: 'Profil kolorystyczny', key: 'lut', options: LUT_MODES });
     this._slider(pipe, {

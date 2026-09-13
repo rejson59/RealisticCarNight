@@ -129,7 +129,8 @@ class Game {
       moonP.position.set(40, 80, -60);
       envScene.add(moonP);
       const pmrem2 = new THREE.PMREMGenerator(this.renderer);
-      this.carEnvRT = pmrem2.fromScene(envScene, 0.06, 1, 400);
+      // sigma <= 0.04: bigger values exceed PMREM's 20-sample cap and warn on boot
+      this.carEnvRT = pmrem2.fromScene(envScene, 0.04, 1, 400);
       pmrem2.dispose();
       this.car.setEnvMaps(this.carEnvRT.texture, 2.6);
       envScene.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
@@ -303,7 +304,9 @@ class Game {
     });
     // offline shell (production build only)
     if ('serviceWorker' in navigator && import.meta.env?.PROD) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      // BASE_URL-aware: '/sw.js' would 404 on a GitHub Pages subpath
+      const swUrl = `${import.meta.env.BASE_URL}sw.js`;
+      navigator.serviceWorker.register(swUrl).catch(() => {});
     }
   }
 
@@ -486,6 +489,10 @@ class Game {
     this.audio.setRain(rainOn ? 0.8 : 0);
     this.traffic.setCount(Math.round(s.traffic * d.traffic));
     this.scene.environmentIntensity = s.env;
+    // the tier also changes devicePixelRatio, so the pipeline has to re-size its
+    // buffers with it BEFORE the new profile is applied — otherwise the internal
+    // render targets keep the previous dpr and no longer match the canvas
+    this.pipe.setSize(innerWidth, innerHeight, dpr);
     this.pipe.configure(tier, this._pipeOpts());
     this._applyShadowMode(d.shadowMode);
     this._registerDynamic();
@@ -668,8 +675,12 @@ class Game {
 }
 
 const game = new Game();
+// handy for debugging in the browser console (`__game.pipe.stats`) and for tests
+window.__game = game;
 game.boot().catch((err) => {
   console.error(err);
   const el = document.getElementById('loadStatus');
   if (el) el.textContent = `Błąd startu: ${err.message}`;
 });
+
+export { game };

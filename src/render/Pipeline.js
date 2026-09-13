@@ -84,6 +84,7 @@ export class Pipeline {
     this._projUnjit = new THREE.Matrix4();
     this._usesVelocity = false;
     this._hasPrev = false;
+    this._base = PIPE_PROFILES[2];
     this.photo = false;
     this.composer = null;
   }
@@ -93,6 +94,10 @@ export class Pipeline {
    * Rebuild the chain for a quality tier + user overrides. Cheap enough to call
    * from the settings menu or from the auto-quality governor; all passes are
    * created once and reused, only the render targets are reallocated.
+   *
+   * The tier is a **ceiling**, the user switches can only take effects away:
+   * `effective = tier && user`. Without that, a weak phone on NISKA would get
+   * AO+DOF+TAA just because the checkboxes default to on.
    *
    * @param {number} tier 0..3 index into PIPE_PROFILES
    * @param {object} [user] overrides
@@ -106,10 +111,12 @@ export class Pipeline {
   configure(tier, user = {}) {
     this.tier = tier;
     const base = PIPE_PROFILES[tier] || PIPE_PROFILES[2];
+    this._base = base;          // the tier ceiling, kept for stats/menu
     const p = { ...base };
-    if (user.taa !== undefined) p.taa = !!user.taa;
-    if (user.ao !== undefined) p.ao = !!user.ao;
-    if (user.dof !== undefined) p.dof = !!user.dof;
+    p.taa = base.taa && (user.taa === undefined ? true : !!user.taa);
+    p.ao = base.ao && (user.ao === undefined ? true : !!user.ao);
+    p.dof = base.dof && (user.dof === undefined ? true : !!user.dof);
+    p.velocity = base.velocity && p.taa;
     if (user.lut) p.lut = user.lut;
     if (user.sharpen !== undefined) p.sharpen = user.sharpen;
 
@@ -168,6 +175,7 @@ export class Pipeline {
     });
     rt.depthTexture = new THREE.DepthTexture(w, h);
     this.depthTexture = rt.depthTexture;
+    this.sceneDepth = rt.depthTexture;
 
     const composer = new EffectComposer(this.renderer, rt);
     composer.setPixelRatio(1);   // we manage resolution ourselves
@@ -208,16 +216,39 @@ export class Pipeline {
     pu.uLutMix.value = p.lut === 'none' ? 0 : 1;
     pu.uSharpen.value = p.sharpen;
     pu.uGrain.value = p.grain;
-    this.presentPass.setInternalSize(w, h);
-    this.presentPass.setSize(Math.round(this.css.w * this.dpr), Math.round(this.css.h * this.dpr));
     composer.addPass(this.presentPass);
 
     this.composer = composer;
+    // has to happen after addPass(): EffectComposer.addPass calls
+    // pass.setSize(composer size) itself and would overwrite the output
+    // resolution with the internal one
+    this._syncPresent();
     this.stats = {
       taa: !!p.taa, ao: !!p.ao, dof: !!p.dof, velocity: this._usesVelocity,
       msaa: p.taa ? 0 : p.msaa, scale: this.scale, lut: p.lut, internal: [w, h],
+      // what this tier could offer at all — the menu greys out the rest
+      available: {
+        taa: !!this._base.taa, ao: !!this._base.ao, dof: !!this._base.dof,
+      },
     };
     this.resetHistory();
+  }
+
+  /**
+   * Keep the PresentPass uniforms in sync with reality:
+   * uTexelIn  -> the internal buffer it samples from
+   * uOutRes   -> the drawing buffer it writes into (grain, CA, sharpen and the
+   *              vignette aspect are all resolution dependent)
+   * EffectComposer.setSize()/addPass() push the *internal* size into every pass,
+   * so this has to be the last thing that touches them.
+   */
+  _syncPresent() {
+    if (!this.presentPass) return;
+    this.presentPass.setInternalSize(this.internal.w, this.internal.h);
+    this.presentPass.setSize(
+      Math.max(2, Math.round(this.css.w * this.dpr)),
+      Math.max(2, Math.round(this.css.h * this.dpr)),
+    );
   }
 
   /* --------------------------------------------------------------- sizing */
@@ -229,12 +260,24 @@ export class Pipeline {
     const dh = Math.max(2, Math.round(cssH * dpr));
     const iw = Math.max(2, Math.round(dw * this.scale));
     const ih = Math.max(2, Math.round(dh * this.scale));
-    this.presentPass?.setSize(dw, dh);
-    if (!this.composer) { this.internal = { w: iw, h: ih }; return; }
-    if (iw === this.internal.w && ih === this.internal.h) return;
+    if (!this.composer) {
+      this.internal = { w: iw, h: ih };
+      this._syncPresent();
+      return;
+    }
+    if (iw === this.internal.w && ih === this.internal.h) {
+      this._syncPresent();   // dpr may have changed without a size change
+      return;
+    }
     this.internal = { w: iw, h: ih };
 
     this.composer.setSize(iw, ih);
+    // RenderTarget.setSize() resizes the colour attachments but NOT an attached
+    // DepthTexture (three only fixes that lazily when the target is bound).
+    // Keep it explicit so the depth always matches the colour buffer.
+    this.depthTexture.image.width = iw;
+    this.depthTexture.image.height = ih;
+    this.depthTexture.needsUpdate = true;
     this.velocityPass.setSize(iw, ih);
     this.resolvePass.setSize(iw, ih);
     this.aoPass.setSize(iw, ih);
@@ -245,6 +288,7 @@ export class Pipeline {
       Math.max(2, ih * this.profile.bloomScale)
     );
     this.stats.internal = [iw, ih];
+    this._syncPresent();
     this.resetHistory();
   }
 
@@ -299,6 +343,17 @@ export class Pipeline {
     cam.updateMatrixWorld();
     cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
     clearJitter(cam);
+
+    // The composer does NOT reset its buffer ping-pong between frames, so with
+    // an odd number of swapping passes (e.g. HIGH: resolve + AO + output) the
+    // scene would be rendered into the *other* target next frame and every
+    // depth consumer would read a stale depth buffer. Start each frame from a
+    // known state and re-point the depth consumers at the buffer that owns it.
+    this.composer.readBuffer = this.composer.renderTarget1;
+    this.composer.writeBuffer = this.composer.renderTarget2;
+    this.sceneDepth = this.composer.renderTarget1.depthTexture;
+    this.aoPass.setDepthTexture(this.sceneDepth);
+    this.dofPass.setDepthTexture(this.sceneDepth);
 
     // unjittered view-projection → motion vectors + history reprojection
     this._projUnjit.copy(cam.projectionMatrix);

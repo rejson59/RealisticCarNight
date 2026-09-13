@@ -208,7 +208,9 @@ export class HUD {
     g.strokeStyle = grad;
     g.lineWidth = 5 * this.dpr;
     g.lineCap = 'round';
-    g.beginPath(); g.arc(cx, cy, R, a0 + (a1 - a0) * t); g.stroke();
+    // arc() needs BOTH angles: with endAngle missing the browser silently
+    // ignores the call (NaN) and the speed arc never gets drawn
+    g.beginPath(); g.arc(cx, cy, R, a0, a0 + (a1 - a0) * t); g.stroke();
     g.lineWidth = 1.4 * this.dpr;
     g.strokeStyle = 'rgba(200,220,255,0.5)';
     for (let v = 0; v <= 240; v += 20) {
