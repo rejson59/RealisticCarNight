@@ -15,6 +15,35 @@ CITY.S = CITY.BLOCK + CITY.ROAD;              // grid pitch
 CITY.EXTENT = CITY.N * CITY.S;                // city size
 CITY.HALF = CITY.EXTENT / 2;
 
+/* ---------------------------------------------------- traffic light cycle
+ * One shared, deterministic cycle for the whole city so that the visual heads
+ * and the AI (autopilot + traffic) always agree on the colour of a node.
+ * state: 0 = green, 1 = yellow, 2 = red. `axis` is the axis the car travels on.
+ */
+export const LIGHT_CYCLE = 16;
+export const LIGHT_GREEN = 7;
+export const LIGHT_YELLOW = 1.5;
+
+function phaseState(ph) {
+  return ph < LIGHT_GREEN ? 0 : ph < LIGHT_GREEN + LIGHT_YELLOW ? 1 : 2;
+}
+
+/** @param {number} time city time in seconds
+ *  @param {number} i index of the road line along X (0..CITY.N)
+ *  @param {number} j index of the road line along Z (0..CITY.N)
+ *  @param {'x'|'z'} axis travel axis of the driver asking
+ *  @returns {0|1|2} */
+export function lightStateAt(time, i, j, axis) {
+  const key = i * 31 + j * 7;
+  const ph = (time + key * 0.37) % LIGHT_CYCLE;
+  return axis === 'x' ? phaseState(ph) : phaseState((ph + LIGHT_CYCLE / 2) % LIGHT_CYCLE);
+}
+
+/** nearest road-line index for a world coordinate */
+export function lineIndex(v) {
+  return THREE.MathUtils.clamp(Math.round((v + CITY.HALF) / CITY.S), 0, CITY.N);
+}
+
 /**
  * The whole night city: wet roads, instanced towers with lit windows,
  * street lights, traffic lights, neon signs, elevated highways, sky & rain.
@@ -27,6 +56,7 @@ export class City {
     this.tier = 2;
     this.time = 0;
     this.pillarColliders = [];
+    this.dynamicColliders = [];   // traffic cars (filled by Traffic.update)
     this.haloItems = [];
     this.facadeMats = [];
     this.roadLines = [];
@@ -472,7 +502,7 @@ export class City {
               x: Lx + cx * (ROAD / 2 - 1.1),
               z: Lz + cz * (ROAD / 2 - 1.1),
               axis: (h % 2 === 0) ? 'x' : 'z',
-              key,
+              key, i: ii, j: jj,
             });
             h++;
           }
@@ -510,8 +540,6 @@ export class City {
   /** green -> yellow -> red cycle, cross directions offset by half phase */
   _updateTrafficLights(time) {
     if (!this.tlMesh) return;
-    const CYC = 16;
-    const stateAt = (t) => (t < 7 ? 0 : t < 8.5 ? 1 : 2); // 0 g, 1 y, 2 r
     const cols = [
       [0.3, 2.4, 1.0], [2.2, 1.3, 0.08], [2.0, 0.08, 0.08],
     ];
@@ -519,9 +547,7 @@ export class City {
     let dirty = false;
     for (let k = 0; k < this.tlHeads.length; k++) {
       const hd = this.tlHeads[k];
-      const ph = (time + hd.key * 0.37) % CYC;
-      const base = stateAt(ph);
-      const st = hd.axis === 'x' ? base : stateAt((ph + CYC / 2) % CYC);
+      const st = lightStateAt(time, hd.i, hd.j, hd.axis);
       if (this.tlStates.get(k) !== st) {
         this.tlStates.set(k, st);
         c.setRGB(...cols[st]);
@@ -1008,6 +1034,11 @@ export class City {
     }
   }
 
+  /** colour of the lights for a driver on `axis` at grid node (i, j) */
+  lightState(i, j, axis) {
+    return lightStateAt(this.time, i, j, axis);
+  }
+
   /* ------------------------------------------------------------ update */
   update(dt, carPos) {
     this.time += dt;
@@ -1088,6 +1119,21 @@ export class City {
       const rr = p.r + r;
       if (d2 < rr * rr && d2 > 1e-6) {
         const d = Math.sqrt(d2);
+        x = p.x + (dx / d) * rr;
+        z = p.z + (dz / d) * rr;
+        hit = true;
+      }
+    }
+    // traffic cars are soft colliders (only the ones on our level)
+    const dyn = this.dynamicColliders;
+    for (let k = 0; k < dyn.length; k++) {
+      const p = dyn[k];
+      if (p.y !== undefined && p.y > 2) continue;
+      const dx = x - p.x, dz = z - p.z;
+      const d2 = dx * dx + dz * dz;
+      const rr = p.r + r;
+      if (d2 < rr * rr) {
+        const d = Math.sqrt(d2) || 1e-3;
         x = p.x + (dx / d) * rr;
         z = p.z + (dz / d) * rr;
         hit = true;

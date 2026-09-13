@@ -114,6 +114,8 @@ class Game {
     await step('Budowanie samochodu…', 55, () => {
       this.car = new Car(this.scene);
       this.traffic = new Traffic(this.scene, this.city);
+      // traffic acts as a soft collider for the player
+      this.city.dynamicColliders = this.traffic.colliders;
     });
     await step('Odbicia i oświetlenie…', 80, () => {
       // bake environment IBL from the city (reflections off during bake)
@@ -209,7 +211,7 @@ class Game {
   toggleAutopilot(force) {
     const on = force !== undefined ? force : !this.autopilot.enabled;
     this.autopilot.enabled = on;
-    if (on) this.autopilot.snap(this.car);
+    if (on) this.autopilot.snap(this.car, this.city);
     document.getElementById('apBadge').classList.toggle('off', !on);
     this.hud.toast(on ? '🤖 Autopilot włączony — dowolny klawisz jazdy przejmuje kontrolę' : 'Autopilot wyłączony');
   }
@@ -361,7 +363,7 @@ class Game {
       if (this.autopilot.enabled) {
         const manual = input.throttle || input.brake || input.left || input.right || input.handbrake;
         if (manual) this.toggleAutopilot(false);
-        else input = this.autopilot.update(dt, this.car);
+        else input = this.autopilot.update(dt, this.car, this.city, this.traffic.positions);
       }
       this.car.update(dt, input, this.city);
       this.traffic.update(dt);

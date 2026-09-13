@@ -2,7 +2,11 @@ import * as THREE from 'three';
 import { CITY } from './City.js';
 import { mulberry32 } from '../core/utils.js';
 
-/** Ambient AI cars cruising the grid + the elevated loop, with lit lamps. */
+/**
+ * Ambient AI traffic cruising the grid and the elevated roads.
+ * Right-hand traffic, stops at red lights, keeps a gap behind the car in
+ * front, lights its brake lamps and acts as a soft collider for the player.
+ */
 export class Traffic {
   constructor(scene, city) {
     this.scene = scene;
@@ -11,14 +15,15 @@ export class Traffic {
     this.cars = [];
     this.pool = [];
     for (let i = 0; i < 22; i++) this.pool.push(this._makeCar());
-    this.positions = [];
+    this.positions = [];        // flat [x, z, …] for the minimap
+    this.colliders = [];        // [{x, z, r}] for player collisions
     this.setCount(10);
   }
 
   _makeCar() {
     const rnd = this.rnd;
     const g = new THREE.Group();
-    const palette = [0x101318, 0x1a1d24, 0x2a0d10, 0x0d1a2a, 0x20242a, 0x101a14];
+    const palette = [0x101318, 0x1a1d24, 0x2a0d10, 0x0d1a2a, 0x20242a, 0x101a14, 0x2b2416];
     const paint = new THREE.MeshStandardMaterial({
       color: palette[(rnd() * palette.length) | 0],
       metalness: 0.8, roughness: 0.35, envMapIntensity: 1.2,
@@ -40,21 +45,24 @@ export class Traffic {
     const tr = tl.clone(); tr.position.x = 0.62;
     g.add(body, cabin, hl, hr, tl, tr);
     g.visible = false;
+    g.userData.tail = tailMat;
     this.scene.add(g);
     return g;
   }
 
+  /** how many AI cars are on the road (the pool meshes are reused, never duplicated) */
   setCount(n) {
-    this.pool.forEach((c, i) => {
-      const active = i < n;
-      c.visible = active;
-      if (active && !this.cars.includes(c)) this._spawn(c);
-      if (!active && this.cars.includes(c)) this.cars.splice(this.cars.indexOf(c), 1);
-    });
-    while (this.cars.length < n) {
-      const c = this.pool.find((p) => p.visible && !this.cars.includes(p));
-      if (!c) break;
-      this._spawn(c);
+    n = THREE.MathUtils.clamp(Math.round(n) || 0, 0, this.pool.length);
+    const wanted = new Set(this.pool.slice(0, n));
+    for (const car of this.cars.slice()) {
+      if (!wanted.has(car.mesh)) {
+        car.mesh.visible = false;
+        this.cars.splice(this.cars.indexOf(car), 1);
+      }
+    }
+    for (const mesh of wanted) {
+      mesh.visible = true;
+      if (!this.cars.some((c) => c.mesh === mesh)) this._spawn(mesh);
     }
   }
 
@@ -66,16 +74,23 @@ export class Traffic {
     if (useElev) {
       car.mode = 'elev';
       car.curve = this.city.elevCurves[(rnd() * this.city.elevCurves.length) | 0];
+      car.len = Math.max(1, car.curve.getLength());
       car.u = rnd();
-      car.speed = 14 + rnd() * 10;
+      car.cruise = 15 + rnd() * 9;
+      car.speed = car.cruise;
     } else {
       car.mode = 'grid';
       car.axisX = rnd() < 0.5;
-      car.line = this.city.roadLines[(rnd() * this.city.roadLines.length) | 0];
+      car.lineIdx = (rnd() * this.city.roadLines.length) | 0;
+      car.line = this.city.roadLines[car.lineIdx];
       car.dir = rnd() < 0.5 ? 1 : -1;
-      car.lane = car.dir * ROAD * 0.24;
+      // right-hand traffic: for travel +x the right side is -z, for +z it is +x
+      car.lane = -car.dir * ROAD * 0.24;
       car.t = -HALF - 20 + rnd() * (EXTENT + 40);
-      car.speed = 9 + rnd() * 9;
+      car.cruise = 9 + rnd() * 7;
+      car.speed = car.cruise;
+      car.blocked = false;
+      car.braking = false;
     }
     this.cars.push(car);
     this._place(car);
@@ -96,19 +111,79 @@ export class Traffic {
     }
   }
 
+  /** next intersection ahead of a grid car (+ distance to its centre) */
+  _nextNode(car) {
+    const lines = this.city.roadLines;
+    let best = null;
+    for (let k = 0; k < lines.length; k++) {
+      const d = (lines[k] - car.t) * car.dir;
+      if (d < 3) continue;
+      if (!best || d < best.dist) {
+        best = { dist: d, i: car.axisX ? k : car.lineIdx, j: car.axisX ? car.lineIdx : k };
+      }
+    }
+    return best;
+  }
+
+  /** cars in the same lane keep a gap so traffic queues at the lights */
+  _markBlocked() {
+    const grid = this.cars.filter((c) => c.mode === 'grid');
+    for (const c of grid) c.blocked = false;
+    for (let a = 0; a < grid.length; a++) {
+      for (let b = 0; b < grid.length; b++) {
+        if (a === b) continue;
+        const A = grid[a], B = grid[b];
+        if (A.axisX !== B.axisX || A.lineIdx !== B.lineIdx || A.dir !== B.dir) continue;
+        let gap = (B.t - A.t) * A.dir;
+        if (gap > CITY.EXTENT / 2) gap -= CITY.EXTENT + 40;
+        if (gap < -CITY.EXTENT / 2) gap += CITY.EXTENT + 40;
+        if (gap > 0.5 && gap < 13) A.blocked = true;
+      }
+    }
+  }
+
+  _targetSpeed(car) {
+    let v = car.cruise;
+    const node = this._nextNode(car);
+    if (node && this.city.lightState) {
+      const st = this.city.lightState(node.i, node.j, car.axisX ? 'x' : 'z');
+      const d = node.dist - (CITY.ROAD / 2 + 2);   // distance to the stop line
+      if (st === 2 || (st === 1 && d > 16)) {
+        v = Math.min(v, Math.max(0, (d - 5) * 0.55));
+      }
+    }
+    if (car.blocked) v = Math.min(v, 0.4);
+    return v;
+  }
+
   update(dt) {
     const { HALF } = CITY;
     this.positions.length = 0;
+    this.colliders.length = 0;
+    this._markBlocked();
     for (const car of this.cars) {
       if (car.mode === 'elev') {
-        car.u = (car.u + (car.speed * dt) / 1600) % 1;
+        car.u = (car.u + (car.speed * dt) / car.len) % 1;
+        car.braking = false;
       } else {
+        const target = this._targetSpeed(car);
+        const dv = target - car.speed;
+        car.speed += THREE.MathUtils.clamp(dv, -11 * dt, 5 * dt);
+        car.speed = Math.max(0, car.speed);
+        car.braking = dv < -0.8 && car.speed > 0.6;
         car.t += car.speed * car.dir * dt;
         if (car.t > HALF + 30) car.t = -HALF - 30;
         if (car.t < -HALF - 30) car.t = HALF + 30;
       }
       this._place(car);
-      this.positions.push(car.mesh.position.x, car.mesh.position.z);
+      const p = car.mesh.position;
+      this.positions.push(p.x, p.z);
+      this.colliders.push({ x: p.x, z: p.z, r: 1.5, y: p.y });
+      const tail = car.mesh.userData.tail;
+      if (tail) {
+        const on = car.braking;
+        tail.color.setRGB(on ? 7.0 : 2.6, on ? 0.2 : 0.1, on ? 0.24 : 0.13);
+      }
     }
   }
 }

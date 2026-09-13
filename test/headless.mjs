@@ -61,9 +61,12 @@ console.log('quality after 20 s @30fps:', qm.tier, 'auto:', qm.auto);
 if (qm.tier >= 2) throw new Error('adaptive quality did not downgrade');
 
 // traffic counts
-for (const n of [0, 5, 18, 9]) traffic.setCount(n);
+for (const n of [0, 5, 18, 9, 18, 12]) traffic.setCount(n);
 traffic.update(dt);
 console.log('traffic pool OK, positions:', traffic.positions.length / 2);
+if (traffic.cars.length !== 12) throw new Error(`setCount leaked cars: ${traffic.cars.length} instead of 12`);
+if (traffic.positions.length !== 24) throw new Error('traffic positions out of sync with setCount');
+if (traffic.pool.some((m, i) => m.visible !== i < 12)) throw new Error('traffic visibility out of sync');
 
 // straight-line acceleration on an open road
 car.reset();
@@ -75,24 +78,64 @@ console.log(`straight 5 s: ${car.speedKmh.toFixed(0)} km/h at (${car.pos.x.toFix
 if (car.speedKmh < 90) throw new Error('car too slow after 5 s of throttle');
 if (Math.abs(car.pos.x - 57) > 2) throw new Error('car drifted off the straight road');
 
-// autopilot: 90 s of self-driving on the grid
+// autopilot: 180 s of self-driving on the grid, with traffic + lights running
 const { Autopilot } = await import('../src/core/Autopilot.js');
-const ap = new Autopilot();
-car.reset();
-car.pos.set(57, 0, 57);
-car.heading = Math.PI;
-ap.snap(car);
-let apStuck = 0;
-let minSpeed = 999;
-for (let i = 0; i < 60 * 90; i++) {
-  const ain = ap.update(dt, car);
-  if (ain.throttle && car.speedKmh < 5) apStuck++;
-  car.update(dt, ain, city);
-  if (i > 600) minSpeed = Math.min(minSpeed, car.speedKmh);
-  if (!isFinite(car.pos.x) || !isFinite(car.pos.z)) throw new Error('autopilot NaN');
-}
-console.log(`autopilot 90 s: ${car.speedKmh.toFixed(0)} km/h at (${car.pos.x.toFixed(0)}, ${car.pos.z.toFixed(0)}), slowFrames=${apStuck}`);
-if (Math.abs(car.pos.x) > CITY.HALF + 10 || Math.abs(car.pos.z) > CITY.HALF + 10) throw new Error('autopilot left the city');
-if (apStuck > 240) throw new Error('autopilot stuck too often');
+const driveSeconds = (seed, seconds, trafficObj = traffic) => {
+  const ap = new Autopilot(seed);
+  car.reset();
+  car.pos.set(57, 0, 57);
+  car.heading = Math.PI;
+  ap.snap(car, city);
+  let sum = 0, n = 0, stuck = 0, offroad = 0, maxOff = 0;
+  for (let i = 0; i < 60 * seconds; i++) {
+    city.update(dt, car.pos);
+    trafficObj.update(dt);
+    const ain = ap.update(dt, car, city, trafficObj.positions);
+    if (ain.throttle > 0.2 && car.speedKmh < 5) stuck++;
+    car.update(dt, ain, city);
+    if (!isFinite(car.pos.x) || !isFinite(car.pos.z)) throw new Error('autopilot NaN');
+    sum += car.speedKmh; n++;
+    const u = car.pos.x + CITY.HALF, w = car.pos.z + CITY.HALF;
+    const off = Math.min(
+      Math.abs(u - Math.round(u / CITY.S) * CITY.S),
+      Math.abs(w - Math.round(w / CITY.S) * CITY.S)
+    );
+    maxOff = Math.max(maxOff, off);
+    if (off > CITY.ROAD / 2) offroad++;
+  }
+  return { avg: sum / n, stuck, offroad, maxOff, x: car.pos.x, z: car.pos.z };
+};
+
+traffic.setCount(14);
+const d1 = driveSeconds(20260912, 180);
+console.log(`autopilot 180 s: avg ${d1.avg.toFixed(1)} km/h, offroad ${d1.offroad}, maxLateralOffset ${d1.maxOff.toFixed(1)} m, slowFrames=${d1.stuck}`);
+if (Math.abs(d1.x) > CITY.HALF + 10 || Math.abs(d1.z) > CITY.HALF + 10) throw new Error('autopilot left the city');
+if (d1.stuck > 120) throw new Error('autopilot stuck too often');
+if (d1.offroad > 0) throw new Error('autopilot drove off the asphalt');
+if (d1.maxOff > CITY.ROAD / 2) throw new Error('autopilot left its lane');
+if (d1.avg < 18) throw new Error('autopilot crawls (avg < 18 km/h)');
+// determinism: same seed + same world state => the very same drive
+const freshWorld = () => {
+  city.time = 0;
+  const t = new Traffic(scene, city);
+  t.setCount(14);
+  city.dynamicColliders = t.colliders;
+  return t;
+};
+const w2 = freshWorld(); const d2 = driveSeconds(20260912, 60, w2);
+const w3 = freshWorld(); const d3 = driveSeconds(20260912, 60, w3);
+city.dynamicColliders = traffic.colliders;
+if (Math.abs(d2.x - d3.x) > 0.01 || Math.abs(d2.z - d3.z) > 0.01) throw new Error('autopilot is not deterministic');
+console.log('autopilot determinism OK');
+
+// traffic must respect the lights: with 14 cars some are always waiting
+let moving = 0;
+for (let i = 0; i < 60 * 30; i++) { city.update(dt, car.pos); traffic.update(dt); }
+for (const c of traffic.cars) if (c.mode === 'grid' && c.speed > 3) moving++;
+console.log(`traffic after 30 s: ${moving}/${traffic.cars.filter((c) => c.mode === 'grid').length} grid cars moving`);
+if (moving === traffic.cars.filter((c) => c.mode === 'grid').length) throw new Error('no traffic car ever stops at a red light');
+// right-hand traffic: a car heading +x must sit on the -z side of its line
+const xCar = traffic.cars.find((c) => c.mode === 'grid' && c.axisX && c.dir > 0);
+if (xCar && xCar.mesh.position.z > xCar.line) throw new Error('traffic drives on the left');
 
 console.log('HEADLESS TEST PASSED ✔');
