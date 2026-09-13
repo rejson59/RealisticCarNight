@@ -2,8 +2,10 @@
  * Hashed build assets (immutable) are cached forever, navigation is
  * network-first with a cached fallback so the game still opens offline.
  */
-const CACHE = 'rcn-cache-v1';
-const CORE = ['/', '/manifest.webmanifest', '/favicon.svg', '/icons/icon-192.png'];
+const CACHE = 'rcn-cache-v2';
+// Relative on purpose: they resolve against this script's URL, so the same file
+// works on a domain root and on a GitHub Pages subpath (/RealisticCarNight/).
+const CORE = ['./', './index.html', './manifest.webmanifest', './favicon.svg', './icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()));
@@ -46,7 +48,7 @@ self.addEventListener('fetch', (e) => {
           caches.open(CACHE).then((c) => c.put(req, copy));
           return res;
         })
-        .catch(() => caches.match(req).then((hit) => hit || caches.match('/')))
+        .catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html') || caches.match('./')))
     );
   }
 });
