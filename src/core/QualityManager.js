@@ -44,6 +44,19 @@ export class QualityManager {
     return mem <= 2 ? 0 : 1;
   }
 
+  /** force 'auto' or a fixed tier (0..3); used by the settings menu */
+  setMode(mode) {
+    if (mode === 'auto' || mode === null || mode === undefined) {
+      this.auto = true;
+    } else {
+      this.auto = false;
+      this.tier = Math.max(0, Math.min(3, Math.round(mode)));
+    }
+    this.cooldown = 6;
+    this.goodStreak = 0;
+    return { tier: this.tier, auto: this.auto, changed: true };
+  }
+
   /** manual cycle: AUTO -> NISKA -> ŚREDNIA -> WYSOKA -> ULTRA -> AUTO */
   cycle() {
     if (this.auto) {

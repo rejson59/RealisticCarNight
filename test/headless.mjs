@@ -138,4 +138,54 @@ if (moving === traffic.cars.filter((c) => c.mode === 'grid').length) throw new E
 const xCar = traffic.cars.find((c) => c.mode === 'grid' && c.axisX && c.dir > 0);
 if (xCar && xCar.mesh.position.z > xCar.line) throw new Error('traffic drives on the left');
 
+// ---- settings & records (no localStorage in node: must fall back to defaults)
+const { Settings, Records } = await import('../src/core/Settings.js');
+const st = new Settings();
+st.set('traffic', 1.5);
+if (st.get('traffic') !== 1.5) throw new Error('settings.set failed');
+st.patch({ fov: 6, radio: 0.2 });
+if (st.get('fov') !== 6 || st.get('radio') !== 0.2) throw new Error('settings.patch failed');
+st.reset();
+if (st.get('traffic') !== 1 || st.get('firstRun') !== false) throw new Error('settings.reset failed');
+const rec = new Records();
+if (!rec.submit({ score: 500, topSpeed: 180, distance: 4000 }).includes('punkty')) throw new Error('records.submit broken');
+if (rec.submit({ score: 100 }).length) throw new Error('records accepted a worse score');
+console.log('settings + records OK');
+
+// ---- traffic lights: crossing axes must never be green at the same time
+const { lightStateAt, LIGHT_CYCLE } = await import('../src/world/City.js');
+for (let t = 0; t < LIGHT_CYCLE * 4; t += 0.25) {
+  if (lightStateAt(t, 3, 4, 'x') === 0 && lightStateAt(t, 3, 4, 'z') === 0) {
+    throw new Error('both axes green at once');
+  }
+}
+console.log('light cycle OK');
+
+// ---- collectibles: pickup, combo, drift and respawn
+const { Collectibles } = await import('../src/world/Collectibles.js');
+const col = new Collectibles(scene, city, 10);
+city.time = 0;
+let picked = 0;
+col.onCollect = () => { picked++; };
+const ring = col.items.find((it) => it.state === 0);
+car.reset();
+car.pos.set(ring.x, 0, ring.z);
+car.heading = ring.axisX ? Math.PI / 2 : 0;
+col.update(dt, car.pos, car);
+if (picked !== 1 || col.score !== 100) throw new Error('ring was not collected');
+const ring2 = col.items.find((it) => it.state === 0);
+car.pos.set(ring2.x, 0, ring2.z);
+col.update(dt, car.pos, car);
+if (col.combo !== 3) throw new Error('combo did not rise');
+// drift scoring
+car.vf = 15; car.skidAmount = 0.8;
+for (let i = 0; i < 60; i++) col.update(dt, car.pos, car);
+if (col.drift <= 0) throw new Error('drift points did not accrue');
+// popped rings respawn somewhere else, count stays constant
+for (let i = 0; i < 60 * 20; i++) col.update(dt, car.pos, car);
+if (col.items.filter((it) => it.state === 0).length + col.items.filter((it) => it.state === 1).length < 8) {
+  throw new Error('rings did not respawn');
+}
+console.log(`collectibles OK: score=${col.score} drift=${col.drift.toFixed(0)} rings=${col.ringsCollected}`);
+
 console.log('HEADLESS TEST PASSED ✔');

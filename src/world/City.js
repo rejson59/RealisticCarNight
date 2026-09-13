@@ -55,6 +55,10 @@ export class City {
     this.rnd = mulberry32(20260911);
     this.tier = 2;
     this.time = 0;
+    this.rainMode = 'auto';
+    this.rainOn = false;
+    this.reflMul = 1;
+    this.reflRes = 512;
     this.pillarColliders = [];
     this.dynamicColliders = [];   // traffic cars (filled by Traffic.update)
     this.haloItems = [];
@@ -992,27 +996,17 @@ export class City {
   }
 
   /* ------------------------------------------------------ quality API */
-  setQuality(tier) {
+  setQuality(tier, reflMul = 1) {
     this.tier = tier;
+    this.reflMul = reflMul;
     const refl = this.reflection;
     refl.visible = true;
     refl.enabled = true;
-    const reflCfg = [
-      { res: 192, interval: 4, str: 0.8 },
-      { res: 320, interval: 2, str: 0.9 },
-      { res: 512, interval: 2, str: 0.95 },
-      { res: 1024, interval: 1, str: 1.0 },
-    ][tier];
-    refl.setResolution(reflCfg.res);
-    refl.frameInterval = reflCfg.interval;
-    refl.material.uniforms.uStrength.value = reflCfg.str;
-    this.rain.visible = tier >= 3;
     this.lightDecals.visible = true;
     this.lightDecals.material.opacity = [0.35, 0.4, 0.45, 0.5][tier];
     if (this.halos) this.halos.visible = tier >= 1;
     this.stars.visible = tier >= 1;
-    const dens = [0.0034, 0.0029, 0.0024, 0.0020][tier];
-    this.scene.fog = new THREE.FogExp2(0x060a12, dens);
+    this._applyWeather();
     // moon shadows only on high tiers
     const wantShadow = tier >= 2;
     if (wantShadow !== this.moonLight.castShadow) {
@@ -1032,6 +1026,33 @@ export class City {
         }
       }
     }
+  }
+
+  /** 'auto' | 'on' | 'off' — rain follows the tier on auto (ULTRA only) */
+  setRain(mode) {
+    this.rainMode = mode;
+    this._applyWeather();
+    return this.rainOn;
+  }
+
+  /** rain + fog + puddle strength derived from tier and the rain mode */
+  _applyWeather() {
+    const tier = this.tier;
+    this.rainOn = this.rainMode === 'on' || (this.rainMode === 'auto' && tier >= 3);
+    this.rain.visible = this.rainOn;
+    const reflCfg = [
+      { res: 192, interval: 4, str: 0.8 },
+      { res: 320, interval: 2, str: 0.9 },
+      { res: 512, interval: 2, str: 0.95 },
+      { res: 1024, interval: 1, str: 1.0 },
+    ][tier];
+    const res = Math.max(96, Math.min(2048, Math.round(reflCfg.res * (this.reflMul || 1))));
+    this.reflection.setResolution(res);
+    this.reflRes = res;
+    this.reflection.frameInterval = reflCfg.interval;
+    this.reflection.material.uniforms.uStrength.value = reflCfg.str * (this.rainOn ? 1.18 : 1);
+    const dens = [0.0034, 0.0029, 0.0024, 0.0020][tier] + (this.rainOn ? 0.0007 : 0);
+    this.scene.fog = new THREE.FogExp2(0x060a12, dens);
   }
 
   /** colour of the lights for a driver on `axis` at grid node (i, j) */
