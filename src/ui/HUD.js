@@ -1,6 +1,6 @@
 import { CITY } from '../world/City.js';
 
-/** Speedometer gauge, minimap, toasts, overlays. */
+/** Speedometer gauge, minimap, toasts, score/trip/perf overlays. */
 export class HUD {
   constructor() {
     this.gauge = document.getElementById('gauge');
@@ -11,9 +11,20 @@ export class HUD {
     this.fpsBox = document.getElementById('fpsBox');
     this.toastEl = document.getElementById('toast');
     this.hud = document.getElementById('hud');
+    this.scoreBox = document.getElementById('scoreBox');
+    this.scoreVal = document.getElementById('scoreVal');
+    this.comboBox = document.getElementById('comboBox');
+    this.driftBox = document.getElementById('driftBox');
+    this.driftVal = document.getElementById('driftVal');
+    this.tripDist = document.getElementById('tripDist');
+    this.tripTime = document.getElementById('tripTime');
+    this.radioNow = document.getElementById('radioNow');
+    this.perfBox = document.getElementById('perfBox');
+    this.hintsBox = document.getElementById('kbhints');
     this.toastTimer = 0;
     this.fpsAcc = 0;
     this.fpsN = 0;
+    this.rotate = false;
     this._setupSizes();
     this._staticMap = null;
   }
@@ -39,6 +50,40 @@ export class HUD {
   }
 
   setTier(label) { this.tierBox.textContent = label; }
+  setHints(on) { if (this.hintsBox) this.hintsBox.style.display = on ? 'block' : 'none'; }
+  setRotate(on) { this.rotate = !!on; }
+
+  setScore(score, combo, show) {
+    if (!this.scoreBox) return;
+    this.scoreBox.classList.toggle('hidden', !show);
+    if (!show) return;
+    this.scoreVal.textContent = String(score);
+    this.comboBox.classList.toggle('off', combo <= 1);
+    this.comboBox.textContent = `×${combo}`;
+  }
+
+  setDrift(pts, active) {
+    if (!this.driftBox) return;
+    this.driftBox.classList.toggle('off', !active);
+    this.driftVal.textContent = String(Math.round(pts));
+  }
+
+  setTrip(km, clock) {
+    if (this.tripDist) this.tripDist.textContent = `${km.toFixed(2)} km`;
+    if (this.tripTime) this.tripTime.textContent = clock;
+  }
+
+  setRadio(name, on) {
+    if (!this.radioNow) return;
+    this.radioNow.classList.toggle('off', !on);
+    this.radioNow.textContent = on ? `📻 ${name}` : '';
+  }
+
+  setPerf(text, on) {
+    if (!this.perfBox) return;
+    this.perfBox.classList.toggle('off', !on);
+    if (on) this.perfBox.textContent = text;
+  }
 
   buildStaticMap(city) {
     const c = document.createElement('canvas');
@@ -50,20 +95,17 @@ export class HUD {
     const toPx = (v) => (v + range / 2) * k;
     g.fillStyle = 'rgba(5,9,16,0.92)';
     g.fillRect(0, 0, S, S);
-    // blocks
     g.fillStyle = 'rgba(30,40,58,0.55)';
     for (let i = 0; i < CITY.N; i++) {
       const cx = -CITY.HALF + i * CITY.S + CITY.S / 2;
       g.fillRect(toPx(cx - CITY.BLOCK / 2), toPx(cx - CITY.BLOCK / 2), CITY.BLOCK * k, CITY.BLOCK * k);
     }
-    // roads
     g.strokeStyle = 'rgba(120,140,170,0.5)';
     g.lineWidth = Math.max(1.5, CITY.ROAD * k * 0.5);
     for (const L of city.roadLines) {
       g.beginPath(); g.moveTo(toPx(L), 0); g.lineTo(toPx(L), S); g.stroke();
       g.beginPath(); g.moveTo(0, toPx(L)); g.lineTo(S, toPx(L)); g.stroke();
     }
-    // elevated
     g.strokeStyle = 'rgba(35,190,150,0.55)';
     g.lineWidth = Math.max(1.2, 3 * this.dpr * 0.6);
     for (const curve of city.elevCurves) {
@@ -80,24 +122,43 @@ export class HUD {
     this._mapRange = range;
   }
 
-  drawMinimap(car, trafficPositions) {
+  drawMinimap(car, trafficPositions, rings) {
     if (!this._staticMap) return;
     const g = this.mctx;
     const S = this.mini.width;
     g.clearRect(0, 0, S, S);
-    g.drawImage(this._staticMap, 0, 0);
     const k = this._mapK;
     const range = this._mapRange;
     const toPx = (v) => (v + range / 2) * k;
+    const rot = this.rotate ? Math.PI - car.heading : 0;
+
+    g.save();
+    if (rot) {
+      g.translate(S / 2, S / 2);
+      g.rotate(rot);
+      g.translate(-S / 2, -S / 2);
+    }
+    g.drawImage(this._staticMap, 0, 0);
+
     // traffic
     g.fillStyle = 'rgba(255,205,120,0.9)';
     for (let i = 0; i < trafficPositions.length; i += 2) {
       g.fillRect(toPx(trafficPositions[i]) - 1.5, toPx(trafficPositions[i + 1]) - 1.5, 3, 3);
     }
+    // collectible rings
+    if (rings && rings.length) {
+      g.lineWidth = 1.4 * this.dpr * 0.7;
+      g.strokeStyle = 'rgba(120,240,255,0.95)';
+      for (let i = 0; i < rings.length; i += 2) {
+        g.beginPath();
+        g.arc(toPx(rings[i]), toPx(rings[i + 1]), 2.6 * this.dpr * 0.7, 0, Math.PI * 2);
+        g.stroke();
+      }
+    }
     // car
     g.save();
     g.translate(toPx(car.pos.x), toPx(car.pos.z));
-    g.rotate(-car.heading + Math.PI);
+    g.rotate(Math.PI - car.heading - rot);
     g.fillStyle = '#6fe3ff';
     g.beginPath();
     g.moveTo(0, -6 * this.dpr * 0.6);
@@ -106,10 +167,24 @@ export class HUD {
     g.closePath();
     g.fill();
     g.restore();
-    // frame
+    g.restore();
+
+    // frame (+ a north tick when the map rotates)
     g.strokeStyle = 'rgba(110,227,255,0.25)';
     g.lineWidth = 1 * this.dpr;
     g.strokeRect(0.5, 0.5, S - 1, S - 1);
+    if (rot) {
+      g.save();
+      g.translate(S / 2, S / 2);
+      g.rotate(-rot);
+      g.strokeStyle = 'rgba(234,246,255,0.75)';
+      g.lineWidth = 1.6 * this.dpr;
+      g.beginPath();
+      g.moveTo(0, -S / 2 + 4 * this.dpr);
+      g.lineTo(0, -S / 2 + 10 * this.dpr);
+      g.stroke();
+      g.restore();
+    }
   }
 
   drawGauge(kmh, gear, braking) {
@@ -119,16 +194,13 @@ export class HUD {
     const R = S * 0.42;
     g.clearRect(0, 0, S, S);
     const a0 = Math.PI * 0.75, a1 = Math.PI * 2.25;
-    // dial bg
     g.beginPath();
     g.arc(cx, cy, R + 6 * this.dpr, 0, Math.PI * 2);
     g.fillStyle = 'rgba(6,10,18,0.55)';
     g.fill();
-    // track
     g.lineWidth = 5 * this.dpr;
     g.strokeStyle = 'rgba(90,110,140,0.35)';
     g.beginPath(); g.arc(cx, cy, R, a0, a1); g.stroke();
-    // speed arc
     const t = Math.min(1, kmh / 240);
     const grad = g.createLinearGradient(0, S, S, 0);
     grad.addColorStop(0, '#28d7fe');
@@ -136,8 +208,9 @@ export class HUD {
     g.strokeStyle = grad;
     g.lineWidth = 5 * this.dpr;
     g.lineCap = 'round';
+    // arc() needs BOTH angles: with endAngle missing the browser silently
+    // ignores the call (NaN) and the speed arc never gets drawn
     g.beginPath(); g.arc(cx, cy, R, a0, a0 + (a1 - a0) * t); g.stroke();
-    // ticks
     g.lineWidth = 1.4 * this.dpr;
     g.strokeStyle = 'rgba(200,220,255,0.5)';
     for (let v = 0; v <= 240; v += 20) {
@@ -148,7 +221,6 @@ export class HUD {
       g.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2);
       g.stroke();
     }
-    // digital
     g.fillStyle = '#eaf6ff';
     g.font = `600 ${26 * this.dpr}px system-ui, sans-serif`;
     g.textAlign = 'center';
@@ -165,7 +237,9 @@ export class HUD {
   fps(dt) {
     this.fpsAcc += dt; this.fpsN += 1;
     if (this.fpsAcc >= 0.5) {
-      this.fpsBox.textContent = `${Math.round(this.fpsN / this.fpsAcc)} FPS`;
+      const f = Math.round(this.fpsN / this.fpsAcc);
+      this.fpsBox.textContent = `${f} FPS`;
+      this.lastFps = f;
       this.fpsAcc = 0; this.fpsN = 0;
     }
   }

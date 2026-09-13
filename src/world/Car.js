@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { canvasTexture, headlightPoolTexture } from '../core/utils.js';
+import { canvasTexture, headlightPoolTexture, radialGlowTexture } from '../core/utils.js';
 
 /**
  * Procedural night-street coupe (black paint, tinted glass, spoiler,
@@ -110,6 +110,17 @@ export class Car {
     this.group.add(tail);
     this.tailMesh = tail;
 
+    // reverse lamps (white, only when backing up)
+    this.revMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0.0, 0.0, 0.0) });
+    for (const sx of [-0.72, 0.72]) {
+      const rev = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.09, 0.05), this.revMat);
+      rev.position.set(sx, 0.70, -2.34);
+      this.group.add(rev);
+    }
+    this.reverseLight = new THREE.PointLight(0xdfe8ff, 0, 9, 2);
+    this.reverseLight.position.set(0, 0.75, -2.7);
+    this.group.add(this.reverseLight);
+
     // interior glow (dashboard + cabin light) — like the screenshots
     const dash = new THREE.Mesh(
       new THREE.PlaneGeometry(1.1, 0.28),
@@ -188,6 +199,28 @@ export class Car {
     this.group.add(spill);
     this.spill = spill;
 
+    // -------------------------------------------------- volumetric headlight cones
+    this._buildLightCones();
+
+    // -------------------------------------------------- neon underglow (optional)
+    this.underglowMat = new THREE.MeshBasicMaterial({
+      map: canvasTexture(radialGlowTexture()), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.0,
+      color: new THREE.Color(0.2, 1.4, 1.9),
+    });
+    const ug = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 8.4), this.underglowMat);
+    ug.rotation.x = -Math.PI / 2;
+    ug.position.set(0, 0.07, 0);
+    ug.visible = false;
+    this.group.add(ug);
+    this.underglowMesh = ug;
+    this.underglowLight = new THREE.PointLight(0x28d7fe, 0, 7.5, 2);
+    this.underglowLight.position.set(0, 0.28, 0);
+    this.group.add(this.underglowLight);
+
+    // -------------------------------------------------- tyre marks (drift)
+    this._buildSkidMarks();
+
     // -------------------------------------------------- drift smoke
     const SN = 96;
     this.smoke = {
@@ -219,6 +252,10 @@ export class Car {
     this.radius = 1.15;
     this.glassMat = glass;
     this.resetRequested = false;
+    this.impact = 0;           // 0..1, spikes on a hit (sound + shake)
+    this.skidAmount = 0;       // how hard the tyres are scrubbing right now
+    this.brakingNow = false;
+    this.reversing = false;
     this.update(0, { throttle: 0, brake: 0, left: false, right: false, handbrake: false }, null);
   }
 
@@ -287,6 +324,7 @@ export class Car {
     if (city) {
       const res = city.collide(nx, nz, this.radius);
       if (res.hit) {
+        const vBefore = Math.hypot(this.vf, this.vl);
         // push-out direction = wall normal; kill only the velocity into it,
         // so the car keeps sliding along walls instead of gluing to them
         const px = res.x - nx, pz = res.z - nz;
@@ -303,6 +341,8 @@ export class Car {
             this.vf = vx * fx + vz * fz;
             this.vl = vx * rx + vz * rz;
           }
+          const lost = vBefore - Math.hypot(this.vf, this.vl);
+          if (lost > 0.4) this.impact = Math.max(this.impact, Math.min(1, lost / 12));
         }
       }
     }
@@ -361,11 +401,216 @@ export class Car {
 
     // lights state
     const braking = input.brake > 0.05 || input.handbrake;
-    this.tailMat.color.setRGB(braking ? 4.0 : 2.6, braking ? 0.15 : 0.1, braking ? 0.17 : 0.13);
-    this.brakeLight.intensity = braking ? 4 : 1.2;
-    const reverse = this.vf < -0.4;
-    void reverse;
+    this.brakingNow = braking;
+    this.tailMat.color.setRGB(braking ? 4.6 : 2.6, braking ? 0.16 : 0.1, braking ? 0.19 : 0.13);
+    this.brakeLight.intensity = braking ? 4.5 : 1.2;
+    this.reversing = this.vf < -0.4;
+    const revTarget = this.reversing ? 2.6 : 0.0;
+    this.revMat.color.r += (revTarget - this.revMat.color.r) * Math.min(1, dt * 12);
+    this.revMat.color.g = this.revMat.color.b = this.revMat.color.r;
+    this.reverseLight.intensity = this.reversing ? 2.4 : 0;
+    this.impact = Math.max(0, this.impact - dt * 2.6);
+
+    // headlight cones breathe with fog/rain and pulse on impact-free high speed
+    if (this.coneMat) {
+      const want = this.coneBase * (this.coneWet ? 1.75 : 1.0);
+      this.coneMat.uniforms.uIntensity.value +=
+        (want - this.coneMat.uniforms.uIntensity.value) * Math.min(1, dt * 3);
+    }
+
+    // tyre marks + scrub level
+    this.skidAmount = Math.min(1, Math.abs(this.vl) / 7 + (input.handbrake && Math.abs(this.vf) > 8 ? 0.55 : 0));
+    if (this.skidAmount > 0.22 && Math.abs(this.vf) > 5) this._laySkid(rx, rz, fx, fz, dt);
+    this._updateSkid(dt);
 
     return this.pos;
+  }
+
+  /* ------------------------------------------------------- customisation */
+  /** body paint colour (hex) — used by the garage / settings panel */
+  setPaint(hex) {
+    this.paint.color.setHex(hex);
+    this.paint.needsUpdate = true;
+  }
+
+  /** headlight colour (hex) for lamps, spotlights and the volumetric cones */
+  setHeadlightColor(hex) {
+    const c = new THREE.Color(hex);
+    this.headMat.color.copy(c).multiplyScalar(4.6);
+    this.spotL.color.copy(c);
+    this.spotR.color.copy(c);
+    if (this.coneMat) this.coneMat.uniforms.uColor.value.copy(c).multiplyScalar(0.6);
+    if (this.spill) this.spill.material.color.copy(c);
+  }
+
+  /** neon underglow: hex colour, or null to switch it off */
+  setUnderglow(hex) {
+    const on = hex !== null && hex !== undefined && hex !== false;
+    this.underglowMesh.visible = on;
+    this.underglowLight.visible = on;
+    if (!on) {
+      this.underglowMat.opacity = 0;
+      this.underglowLight.intensity = 0;
+      return;
+    }
+    const c = new THREE.Color(hex);
+    this.underglowMat.color.copy(c).multiplyScalar(1.5);
+    this.underglowMat.opacity = 0.55;
+    this.underglowLight.color.copy(c);
+    this.underglowLight.intensity = 3.4;
+  }
+
+  /** rain / wet night: cones scatter more light */
+  setWet(on) { this.coneWet = !!on; }
+
+  /** hide the volumetric cones for cameras that sit inside them */
+  setConesVisible(on) { for (const c of this.cones) c.visible = on; }
+
+  /* -------------------------------------------------- volumetric cones */
+  _buildLightCones() {
+    const LEN = 26, RAD = 5.2;
+    const geo = new THREE.ConeGeometry(RAD, LEN, 22, 1, true);
+    geo.rotateX(-Math.PI / 2);
+    geo.translate(0, 0, LEN / 2);          // apex at the lamp, opens forward
+    this.coneMat = new THREE.ShaderMaterial({
+      uniforms: {
+        uColor: { value: new THREE.Color(0.55, 0.68, 0.95) },
+        uIntensity: { value: 0.0 },
+        uLen: { value: LEN },
+      },
+      vertexShader: `
+        varying float vT;
+        varying vec3 vN;
+        varying vec3 vView;
+        uniform float uLen;
+        void main(){
+          vT = clamp(position.z / uLen, 0.0, 1.0);
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vN = normalize(normalMatrix * normal);
+          vView = normalize(-mv.xyz);
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        uniform vec3 uColor;
+        uniform float uIntensity;
+        varying float vT;
+        varying vec3 vN;
+        varying vec3 vView;
+        void main(){
+          float rim = 1.0 - abs(dot(normalize(vN), normalize(vView)));
+          float a = pow(1.0 - vT, 1.7) * (0.18 + 0.82 * pow(rim, 1.6));
+          gl_FragColor = vec4(uColor * a * uIntensity, 1.0);
+        }`,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+    });
+    this.coneBase = 0.22;
+    this.coneWet = false;
+    this.cones = [];
+    for (const sx of [-0.62, 0.62]) {
+      const cone = new THREE.Mesh(geo, this.coneMat);
+      cone.position.set(sx, 0.78, 2.25);
+      cone.rotation.x = -0.045;
+      cone.renderOrder = 3;
+      cone.frustumCulled = false;
+      this.group.add(cone);
+      this.cones.push(cone);
+    }
+    this.coneMat.uniforms.uIntensity.value = this.coneBase;
+  }
+
+  /* ------------------------------------------------------- tyre marks */
+  _buildSkidMarks() {
+    const N = 640;
+    this.skid = { n: N, head: 0, life: new Float32Array(N), fade: new Float32Array(N), t: 0 };
+    const geo = new THREE.PlaneGeometry(0.34, 1.5);
+    geo.rotateX(-Math.PI / 2);
+    const fades = new Float32Array(N);
+    geo.setAttribute('aFade', new THREE.InstancedBufferAttribute(fades, 1));
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color(0.012, 0.012, 0.016) } },
+      vertexShader: `
+        attribute float aFade;
+        varying float vFade;
+        varying vec2 vUv2;
+        void main(){
+          vFade = aFade;
+          vUv2 = uv;
+          vec4 mv = viewMatrix * instanceMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        uniform vec3 uColor;
+        varying float vFade;
+        varying vec2 vUv2;
+        void main(){
+          float edge = smoothstep(0.0, 0.22, vUv2.y) * smoothstep(1.0, 0.78, vUv2.y);
+          float soft = smoothstep(0.0, 0.25, vUv2.x) * smoothstep(1.0, 0.75, vUv2.x);
+          gl_FragColor = vec4(uColor, vFade * edge * soft * 0.85);
+        }`,
+      transparent: true,
+      depthWrite: false,
+    });
+    const mesh = new THREE.InstancedMesh(geo, mat, N);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 1;
+    const m4 = new THREE.Matrix4();
+    m4.makeScale(1, 1, 0);                 // park unused marks flat/invisible
+    for (let k = 0; k < N; k++) mesh.setMatrixAt(k, m4);
+    mesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(mesh);
+    this.skidMesh = mesh;
+    this.skidFadeAttr = geo.attributes.aFade;
+    this._m4 = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._e = new THREE.Euler();
+    this._v1 = new THREE.Vector3();
+  }
+
+  _laySkid(rx, rz, fx, fz, dt) {
+    const s = this.skid;
+    s.t += dt;
+    if (s.t < 0.022) return;               // a dab every ~2 cm of time
+    s.t = 0;
+    const yaw = this.group.rotation.y;
+    for (const side of [-0.84, 0.84]) {
+      const i = s.head; s.head = (s.head + 1) % s.n;
+      const wx = this.pos.x + rx * side - fx * 1.42;
+      const wz = this.pos.z + rz * side - fz * 1.42;
+      this._e.set(0, yaw, 0);
+      this._q.setFromEuler(this._e);
+      const len = 1.0 + Math.min(1.6, Math.abs(this.vf) * 0.05);
+      this._v1.set(1, 1, len);
+      this._m4.compose(new THREE.Vector3(wx, 0.055, wz), this._q, this._v1);
+      this.skidMesh.setMatrixAt(i, this._m4);
+      s.life[i] = 7.0;
+      s.fade[i] = Math.min(1, this.skidAmount);
+      this.skidFadeAttr.setX(i, s.fade[i]);
+    }
+    this.skidMesh.instanceMatrix.needsUpdate = true;
+    this.skidFadeAttr.needsUpdate = true;
+  }
+
+  _updateSkid(dt) {
+    const s = this.skid;
+    let dirty = false;
+    for (let i = 0; i < s.n; i++) {
+      if (s.life[i] > 0) {
+        s.life[i] -= dt;
+        const f = Math.max(0, Math.min(1, s.life[i] / 7.0)) * s.fade[i];
+        if (s.life[i] <= 0) {
+          this._m4.makeScale(1, 1, 0);
+          this.skidMesh.setMatrixAt(i, this._m4);
+          this.skidMesh.instanceMatrix.needsUpdate = true;
+          this.skidFadeAttr.setX(i, 0);
+        } else {
+          this.skidFadeAttr.setX(i, f);
+        }
+        dirty = true;
+      }
+    }
+    if (dirty) this.skidFadeAttr.needsUpdate = true;
   }
 }

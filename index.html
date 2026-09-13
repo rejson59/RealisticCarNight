@@ -5,7 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="theme-color" content="#05070d" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Realistic Car Night" />
+
   <title>Realistic Car Night — nocne miasto w przeglądarce</title>
+  <meta name="description" content="Chillowa gra 3D w przeglądarce: nocne downtown, mokry asfalt z odbiciami neonów, deszcz, proceduralne radio synthwave i autopilot. Bez instalacji, bez assetów — całe miasto generuje się w kodzie." />
+  <meta name="author" content="rejson59" />
+  <link rel="canonical" href="https://rejson59.github.io/RealisticCarNight/" />
+
+  <!-- social / preview -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Realistic Car Night — nocne miasto w przeglądarce" />
+  <meta property="og:description" content="Jedź po oświetlonym downtown, neony odbijają się w mokrym asfalcie, proceduralne radio gra synthwave. Three.js, zero zewnętrznych assetów." />
+  <meta property="og:image" content="https://rejson59.github.io/RealisticCarNight/og.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:locale" content="pl_PL" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Realistic Car Night — nocne miasto w przeglądarce" />
+  <meta name="twitter:description" content="Chill drive po neonowym mieście: mokry asfalt, deszcz, odbicia planarne, proceduralne radio." />
+  <meta name="twitter:image" content="https://rejson59.github.io/RealisticCarNight/og.jpg" />
+
+  <!-- PWA -->
+  <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+  <link rel="icon" href="%BASE_URL%favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="%BASE_URL%icons/icon-192.png" />
+
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
@@ -25,9 +51,17 @@
   <div id="start" class="hidden">
     <div class="start-box">
       <h1 class="logo">REALISTIC<span>CAR</span>NIGHT</h1>
-      <p class="tag">Chill drive po oświetlonym mieście, odbicia neonów w mokrym asfalcie,<br/>deszcz na ULTRA, dynamiczne dopasowanie grafiki do Twojego urządzenia.</p>
-      <button id="startBtn">🌃 JEDŹ</button>
-      <p class="tiny">Kliknij, aby włączyć też dźwięk silnika</p>
+      <p class="tag">Chill drive po oświetlonym mieście, odbicia neonów w mokrym asfalcie,<br/>deszcz, proceduralne radio i autopilot, który sam wiezie Cię przez miasto.</p>
+
+      <div id="startPaint" class="start-paint" aria-label="Wybór lakieru"></div>
+
+      <div class="start-btns">
+        <button id="startBtn">🌃 JEDŹ</button>
+        <button id="startGarage" class="ghost">🔧 Garaż i ustawienia</button>
+      </div>
+
+      <div id="startRecords" class="start-records"></div>
+      <p class="tiny">Kliknij „JEDŹ”, aby włączyć też dźwięk silnika i radio. Grafika dopasuje się sama do Twojego urządzenia.</p>
     </div>
   </div>
 
@@ -39,11 +73,26 @@
       <div id="tierBox">AUTO</div>
       <div id="fpsBox">– FPS</div>
     </div>
+
+    <div id="scoreBox" class="hidden">
+      <div id="scoreVal">0</div>
+      <div id="scoreLbl">pkt</div>
+      <div id="comboBox" class="off">×1.0</div>
+    </div>
+    <div id="driftBox" class="off"><span id="driftVal">0</span> DRIFT</div>
+    <div id="tripBox">
+      <span id="tripDist">0.00 km</span> · <span id="tripTime">0:00</span>
+      <span id="radioNow" class="off">📻 —</span>
+    </div>
+    <div id="perfBox" class="off"></div>
+
     <canvas id="gauge"></canvas>
     <div id="toast"></div>
     <div id="kbhints">
       <b>W/S</b> gaz/hamulec • <b>A/D</b> skręt • <b>SPACJA</b> handbrake •
-      <b>C</b> kamera • <b>R</b> reset • <b>M</b> dźwięk • <b>Q</b> jakość • <b>H</b> pomoc
+      <b>C</b> kamera • <b>F</b> foto • <b>E</b> klakson • <b>N</b> radio •
+      <b>T</b> autopilot • <b>R</b> reset • <b>M</b> dźwięk • <b>Q</b> jakość •
+      <b>O</b> ustawienia • <b>G</b> perf • <b>H</b> pomoc
     </div>
 
     <!-- touch controls -->
@@ -61,10 +110,30 @@
 
     <div id="sideBtns">
       <button id="btn-cam" title="Kamera (C)">🎥</button>
+      <button id="btn-photo" title="Tryb foto (F)">📷</button>
       <button id="btn-sound" title="Dźwięk (M)">🔊</button>
-      <button id="btn-quality" title="Jakość (Q)">⚙️</button>
+      <button id="btn-radio" title="Radio / stacja (N)">📻</button>
       <button id="btn-auto" title="Autopilot (T)">🤖</button>
+      <button id="btn-settings" title="Ustawienia i garaż (O)">⚙️</button>
       <button id="btn-help" title="Pomoc (H)">❔</button>
+    </div>
+
+    <!-- photo mode -->
+    <div id="photoBar" class="off">
+      <b>TRYB FOTO</b> przeciągnij myszą/palcem, aby obracać • kółko = zoom •
+      <b>P</b> zapisz PNG • <b>T</b> autopilot • <b>F</b> wyjście
+    </div>
+  </div>
+
+  <!-- settings / garage -->
+  <div id="menu" class="hidden">
+    <div class="menu-box">
+      <div class="menu-head">
+        <h2>USTAWIENIA <span>/ garaż</span></h2>
+        <button id="menuClose" aria-label="Zamknij">✕</button>
+      </div>
+      <div class="menu-tabs" id="menuTabs"></div>
+      <div class="menu-body" id="menuBody"></div>
     </div>
   </div>
 
@@ -75,15 +144,26 @@
       <table>
         <tr><td>W / S / strzałki</td><td>gaz / hamulec + wsteczny</td></tr>
         <tr><td>A / D / strzałki</td><td>skręt</td></tr>
-        <tr><td>SPACJA</td><td>handbrake (drift)</td></tr>
-        <tr><td>C</td><td>zmiana kamery (pościg / maska)</td></tr>
+        <tr><td>SPACJA</td><td>handbrake (drift + ślady opon)</td></tr>
+        <tr><td>C</td><td>kamera: pościg → maska → zderzak → filmowa</td></tr>
+        <tr><td>F</td><td>tryb foto — obracana kamera, zapis ekranu do PNG</td></tr>
+        <tr><td>P</td><td>zapisz zrzut ekranu (PNG)</td></tr>
+        <tr><td>E</td><td>klakson</td></tr>
+        <tr><td>N</td><td>następna stacja radia (proceduralny synthwave)</td></tr>
+        <tr><td>T / 🤖</td><td>autopilot — sam jeździ po mieście i czeka na czerwonym</td></tr>
         <tr><td>R</td><td>reset na środek skrzyżowania</td></tr>
         <tr><td>M</td><td>dźwięk wł./wył.</td></tr>
         <tr><td>Q</td><td>cykl jakości: AUTO → NISKA → … → ULTRA</td></tr>
-        <tr><td>T / 🤖</td><td>autopilot — sam jeździ po mieście, dowolny klawisz jazdy go wyłącza</td></tr>
+        <tr><td>O / ESC</td><td>ustawienia i garaż (lakier, neon, deszcz, głośność)</td></tr>
+        <tr><td>G</td><td>panel wydajności (FPS, draw-calle, trójkąty)</td></tr>
+        <tr><td>H</td><td>ta pomoc</td></tr>
         <tr><td>Telefon</td><td>przyciski na ekranie (gaz, hamulec, skręt, drift)</td></tr>
       </table>
-      <p class="tiny">Grafika dopasowuje się sama do wydajności urządzenia (FPS), żeby nie przeciążać słabszych telefonów. Możesz też wymusić jakość klawiszem Q.</p>
+      <h2 class="mt">Neonowe pierścienie</h2>
+      <p class="tiny wide">Na ulicach pojawiają się świecące pierścienie. Przejedź przez nie, żeby zdobyć punkty —
+      każdy kolejny w krótkim odstępie zwiększa mnożnik combo. Wynik, dystans, prędkość i drift
+      trafiają do rekordów zapisanych w Twojej przeglądarce. Pierścienie można wyłączyć w ustawieniach.</p>
+      <p class="tiny">Grafika dopasowuje się sama do wydajności urządzenia (FPS), żeby nie przeciążać słabszych telefonów. Możesz też wymusić jakość klawiszem Q lub w ustawieniach.</p>
       <button id="helpClose">Zamknij</button>
     </div>
   </div>

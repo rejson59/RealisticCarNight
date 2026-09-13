@@ -8,6 +8,9 @@ export class Input {
 
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return;
+      // don't hijack keys while the user is in a menu control (sliders, pickers)
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA')) return;
       this.keys.add(e.code);
       switch (e.code) {
         case 'KeyC': actions.camera?.(); break;
@@ -16,6 +19,13 @@ export class Input {
         case 'KeyH': actions.help?.(); break;
         case 'KeyQ': actions.quality?.(); break;
         case 'KeyT': actions.auto?.(); break;
+        case 'KeyF': actions.photo?.(); break;
+        case 'KeyP': actions.capture?.(); break;
+        case 'KeyE': actions.horn?.(); break;
+        case 'KeyN': actions.radioNext?.(); break;
+        case 'KeyG': actions.perf?.(); break;
+        case 'KeyO': actions.menu?.(); break;
+        case 'Escape': actions.escape?.(); break;
         default: break;
       }
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();

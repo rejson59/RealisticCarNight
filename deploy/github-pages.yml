@@ -1,0 +1,75 @@
+name: GitHub Pages
+
+# SZABLON — skopiuj do .github/workflows/pages.yml (bot na gałęzi PR nie ma
+# uprawnienia `workflows`, więc GitHub odrzuca push pliku w tym katalogu).
+# Buduje grę i wystawia ją na GitHub Pages.
+# JEDNORAZOWO w repo: Settings → Pages → Build and deployment → Source: "GitHub Actions".
+# (Wcześniejsze ustawienie "Deploy from a branch: main /docs" serwowało dokumentację
+#  jako tekst zamiast gry — stąd pusta strona bez canvasu.)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # jsdom 30 (test/boot.mjs) wymaga Node >= 22.22
+          node-version: 22
+          cache: npm
+
+      - name: Zależności
+        run: npm ci
+
+      - name: Testy headless (miasto, fizyka, AI, potok, realny boot gry w jsdom)
+        run: npm test
+
+      - name: Walidacja shaderów GLSL ES 3.00
+        run: |
+          npm i --no-save --no-audit --no-fund glslang-validator-prebuilt-predownloaded
+          chmod +x node_modules/glslang-validator-prebuilt-predownloaded/bin/glslangValidator.linux
+          npm run test:glsl
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build (base './' — działa w podkatalogu Pages)
+        run: |
+          npm run build
+          # strona żyje pod /RealisticCarNight/, więc odnośniki muszą być względne
+          if grep -qE '(src|href)="/[^/]' dist/index.html; then
+            echo "::error::dist/index.html ma ścieżki absolutne — Pages pokaże pustą stronę"
+            exit 1
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publikacja
+        id: deployment
+        uses: actions/deploy-pages@v4

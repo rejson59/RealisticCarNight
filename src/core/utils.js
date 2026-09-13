@@ -197,6 +197,21 @@ export function radialTexture(inner = 'rgba(255,255,255,1)', outer = 'rgba(255,2
   return c;
 }
 
+/** soft round glow (underglow decals, light blooms) */
+export function radialGlowTexture(size = 256) {
+  const c = makeCanvas(size, size);
+  const g = c.getContext('2d');
+  const h = size / 2;
+  const grad = g.createRadialGradient(h, h, 0, h, h, h);
+  grad.addColorStop(0, 'rgba(255,255,255,0.95)');
+  grad.addColorStop(0.35, 'rgba(255,255,255,0.45)');
+  grad.addColorStop(0.7, 'rgba(255,255,255,0.12)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
+  return c;
+}
+
 export function lightPoolTexture() {
   const c = makeCanvas(128, 128);
   const g = c.getContext('2d');
