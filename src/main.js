@@ -12,7 +12,7 @@ import { Autopilot } from './core/Autopilot.js';
 import { Settings, Records, PAINTS } from './core/Settings.js';
 import { HUD } from './ui/HUD.js';
 import { Menu } from './ui/Menu.js';
-import { PostFX } from './render/PostFX.js';
+import { Pipeline } from './render/Pipeline.js';
 import { CameraRig, CAM_NAMES } from './render/CameraRig.js';
 import { mulberry32 as mulberry } from './core/utils.js';
 
@@ -28,6 +28,8 @@ class Game {
     });
     this.renderer.setClearColor(0x05070d, 1);
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    // OutputPass reads the exposure every frame; the stored user value is
+    // applied by _applySettings('*') once the Settings store exists.
     this.renderer.toneMappingExposure = 1.15;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -47,7 +49,8 @@ class Game {
     this.radio = new Radio();
     this.camRig = new CameraRig(this.camera);
     this.autopilot = new Autopilot();
-    this.post = new PostFX(this.renderer, this.scene, this.camera);
+    this.pipe = new Pipeline(this.renderer, this.scene, this.camera);
+    this._blur = 0;
 
     this.started = false;
     this.time = 0;
@@ -157,6 +160,7 @@ class Game {
         records: this.records,
         stations: STATIONS,
         session: () => this.session,
+        stats: () => this.pipe.stats,
         onApply: (key) => this._applySettings(key),
       });
       this.radio.onStation = (name) => {
@@ -164,6 +168,8 @@ class Game {
         if (this.started && this.settings.get('radioOn')) this.hud.toast(`📻 ${name}`, 2400);
       };
       this._buildStartScreen();
+      // dynamic objects feed the motion-vector buffer used by TAA
+      this.pipe.registerDynamic(this.car.group);
       this._applySettings('*');
       this.hud.buildStaticMap(this.city);
       this._bindUI();
@@ -344,7 +350,9 @@ class Game {
   togglePhoto(force) {
     const on = force !== undefined ? force : !this.camRig.photo.active;
     this.camRig.setPhoto(on);
-    this.post.setPhoto(on);
+    this.pipe.setPhoto(on);
+    // photo mode always renders at full internal resolution (screenshots)
+    this.pipe.configure(this.quality.tier, this._pipeOpts());
     document.getElementById('photoBar').classList.toggle('off', !on);
     document.getElementById('hud').classList.toggle('photo', on);
     this.hud.toast(on
@@ -397,7 +405,9 @@ class Game {
 
   capturePhoto() {
     try {
-      this.post.render();
+      // a still capture must not be temporally blended with the previous frame
+      this.pipe.resetHistory();
+      this.pipe.render();
       const url = this.renderer.domElement.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = url;
@@ -443,6 +453,11 @@ class Game {
       this.hud.setTier(this.quality.label());
     }
     if (all || changed === 'traffic' || changed === 'rain' || changed === 'reflections') reTier();
+    if (all || changed === 'upscale' || changed === 'ao' || changed === 'dof' || changed === 'lut') {
+      this.pipe.configure(this.quality.tier, this._pipeOpts());
+    }
+    if (all || changed === 'exposure') this.renderer.toneMappingExposure = d.exposure;
+    if (all || changed === 'shadowMode') this._applyShadowMode(d.shadowMode);
 
     if (all || changed === 'master' || changed === 'engine' || changed === 'radio') {
       this.audio.setVolumes({ master: d.master, engine: d.engine, radio: d.radio });
@@ -471,10 +486,66 @@ class Game {
     this.audio.setRain(rainOn ? 0.8 : 0);
     this.traffic.setCount(Math.round(s.traffic * d.traffic));
     this.scene.environmentIntensity = s.env;
-    this.post.setTier(tier);
-    this.post.build(s, dpr);
+    this.pipe.configure(tier, this._pipeOpts());
+    this._applyShadowMode(d.shadowMode);
+    this._registerDynamic();
     this.hud.setTier(this.quality.label());
     if (!first) this.hud.toast(`Auto-dostosowanie grafiki: ${TIER_NAMES[tier]}`, 2000);
+  }
+
+  /** render-pipeline options straight from the settings store */
+  _pipeOpts() {
+    const d = this.settings.data;
+    return {
+      taa: d.upscale,
+      ao: d.ao,
+      dof: d.dof,
+      lut: d.lut,
+      photo: !!this.camRig?.photo.active,
+    };
+  }
+
+  /**
+   * Traffic cars are pooled and respawned by setCount(), so the motion-vector
+   * registry is refreshed whenever the tier or the traffic slider changes.
+   * Registration is idempotent — already-known meshes are skipped.
+   */
+  _registerDynamic() {
+    if (!this.traffic) return;
+    for (const c of this.traffic.cars) this.pipe.registerDynamic(c.mesh);
+    for (const c of this.traffic.pool) this.pipe.registerDynamic(c);
+  }
+
+  /**
+   * Shadow filtering. PCF Soft is the default (cheap, no bleeding); VSM adds a
+   * separable blur for very soft penumbrae at the cost of a float shadow map.
+   * Changing the algorithm invalidates the cached map, so it is dropped here.
+   */
+  _applyShadowMode(mode = 'auto') {
+    const tier = this.quality.tier;
+    const s = TIER_SETTINGS[tier];
+    this.renderer.shadowMap.enabled = s.shadows;
+    if (!s.shadows) return;
+    const vsm = mode === 'vsm';
+    const type = vsm ? THREE.VSMShadowMap : THREE.PCFSoftShadowMap;
+    if (this.renderer.shadowMap.type !== type) {
+      this.renderer.shadowMap.type = type;
+      const moon = this.city?.moonLight;
+      if (moon?.shadow.map) {
+        moon.shadow.map.dispose();
+        moon.shadow.map = null;   // reallocated with the right internal format
+      }
+    }
+    const moon = this.city?.moonLight;
+    if (moon) {
+      // VSM blurs the map, so it needs a much smaller depth bias and a bit more
+      // normal bias to avoid both acne and peter-panning.
+      moon.shadow.radius = vsm ? 3.2 : 1;
+      moon.shadow.blurSamples = vsm ? 12 : 4;
+      moon.shadow.bias = vsm ? -0.00012 : -0.0006;
+      moon.shadow.normalBias = vsm ? 0.6 : 0.4;
+    }
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   /* ------------------------------------------------------------- resize */
@@ -485,7 +556,7 @@ class Game {
     this.renderer.setSize(w, h);
     const s = TIER_SETTINGS[this.quality.tier];
     const dpr = Math.min(window.devicePixelRatio || 1, s.pixelRatio) * (this.quality.resScale || 1);
-    this.post.setSize(w, h, dpr);
+    this.pipe.setSize(w, h, dpr);
   }
 
   /* --------------------------------------------------------------- loop */
@@ -544,7 +615,9 @@ class Game {
       const kmhNow = this.car.speedKmh;
       const wantBlur = this.quality.tier >= 2 && !this.camRig.photo.active
         ? Math.min(1, Math.max(0, (kmhNow - 80) / 140)) : 0;
-      this.post.update(this.time, wantBlur, rawDt);
+      this._blur += (wantBlur - this._blur) * Math.min(1, rawDt * 3);
+      this.pipe.setTime(this.time);
+      this.pipe.setSpeedBlur(this._blur);
 
       // HUD (throttled on purpose — canvas 2D costs CPU on phones)
       if (this.frame % 2 === 0) {
@@ -566,8 +639,12 @@ class Game {
       if (this.perfOn && this.frame % 12 === 0) this._drawPerf();
       this.hud.fps(rawDt);
 
+      // --- frame: jitter + matrices -> draw -> motion snapshot
+      this.pipe.beginFrame();
+      this.pipe.setFocus(this.camRig.pos.distanceTo(this.car.pos));
       this.renderer.shadowMap.needsUpdate = true;
-      this.post.render();
+      this.pipe.render();
+      this.pipe.endFrame();
     };
     tick();
   }
@@ -581,6 +658,9 @@ class Game {
       `draw-calle ${info.render.calls} • trójkąty ${(info.render.triangles / 1000).toFixed(0)}k`,
       `odbicia ${this.city.reflRes}px co ${this.city.reflection.frameInterval} kl.`,
       `dpr ${dpr.toFixed(2)} • auta ${this.traffic.cars.length} • tier ${TIER_NAMES[this.quality.tier]}`,
+      `wewnętrzna ${this.pipe.stats.internal?.join('×') ?? '–'} (${Math.round((this.pipe.stats.scale ?? 1) * 100)}%)`
+        + ` • ${[this.pipe.stats.taa && 'TAA', this.pipe.stats.velocity && 'MV', this.pipe.stats.ao && 'AO',
+          this.pipe.stats.dof && 'DOF'].filter(Boolean).join('+') || 'raster'}`,
       `tekstury ${info.memory.textures} • geometrie ${info.memory.geometries}`,
     ];
     this.hud.setPerf(lines.join('\n'), true);

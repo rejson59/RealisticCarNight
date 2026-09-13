@@ -1,5 +1,5 @@
 import {
-  PAINTS, GLOWS, HEADLIGHTS, QUALITY_MODES, RAIN_MODES,
+  PAINTS, GLOWS, HEADLIGHTS, QUALITY_MODES, RAIN_MODES, LUT_MODES, SHADOW_MODES,
 } from '../core/Settings.js';
 
 /**
@@ -24,13 +24,15 @@ export class Menu {
    * @param {{name:string}[]} opts.stations radio station list
    * @param {(key:string, value:any)=>void} opts.onApply
    * @param {()=>object} opts.session live session stats
+   * @param {()=>object|null} opts.stats live render-pipeline stats
    */
-  constructor({ settings, records, stations = [], onApply, session = () => ({}) }) {
+  constructor({ settings, records, stations = [], onApply, session = () => ({}), stats = () => null }) {
     this.settings = settings;
     this.records = records;
     this.stations = stations;
     this.onApply = onApply || (() => {});
     this.session = session;
+    this.stats = stats;
     this.root = document.getElementById('menu');
     this.tabsEl = document.getElementById('menuTabs');
     this.bodyEl = document.getElementById('menuBody');
@@ -149,7 +151,8 @@ export class Menu {
     }
     sel.addEventListener('change', () => {
       const raw = sel.value;
-      const v = raw === 'auto' || raw === 'on' || raw === 'off' ? raw : Number(raw);
+      // numeric ids stay numbers, everything else (lut/shadow mode) stays a string
+      const v = /^-?[0-9.]+$/.test(raw) ? Number(raw) : raw;
       this._set(key, v);
     });
     parent.appendChild(sel);
@@ -229,14 +232,51 @@ export class Menu {
     const sec = this._section('Jakość obrazu', 'AUTO mierzy FPS i samo przełącza poziomy z histerezą — najbezpieczniejsze na telefonach.');
     this._select(sec, { label: 'Poziom grafiki', key: 'quality', options: QUALITY_MODES });
     this._select(sec, { label: 'Deszcz', key: 'rain', options: RAIN_MODES });
+    this._select(sec, { label: 'Cienie', key: 'shadowMode', options: SHADOW_MODES });
     this._slider(sec, { label: 'Gęstość ruchu ulicznego', key: 'traffic', min: 0, max: 2, step: 0.25, scale: 1, digits: 2, unit: '×' });
     this._slider(sec, { label: 'Odbicia w kałużach', key: 'reflections', min: 0.5, max: 2, step: 0.25, digits: 2, unit: '×' });
     this._slider(sec, { label: 'Pole widzenia (FOV)', key: 'fov', min: -10, max: 10, step: 1, digits: 0, unit: '°' });
+
+    const pipe = this._section('Potok renderowania',
+      'Scena rysowana jest w niższej rozdzielczości wewnętrznej i rekonstruowana czasowo (jitter + historia + clip wariancji), '
+      + 'a na końcu ostrzona CAS i oceniana lutem 3D — ta sama rodzina technik co DLSS/FSR. Wyłączenie wraca do natywnej rozdzielczości z MSAA.');
+    this._toggle(pipe, {
+      label: 'Skalowanie czasowe (TAA)',
+      key: 'upscale',
+      hint: 'Więcej FPS przy tej samej ostrości. Wyłączone = natywna rozdzielczość + MSAA.',
+    });
+    this._toggle(pipe, {
+      label: 'Ambient Occlusion',
+      key: 'ao',
+      hint: 'Miękkie cienie kontaktowe w szczelinach, pod autem i przy krawężnikach.',
+    });
+    this._toggle(pipe, {
+      label: 'Głębia ostrości (bokeh)',
+      key: 'dof',
+      hint: 'Delikatne rozmycie tła — oddziela auto od neonów, świetne w trybie foto.',
+    });
+    this._select(pipe, { label: 'Profil kolorystyczny', key: 'lut', options: LUT_MODES });
+    this._slider(pipe, {
+      label: 'Ekspozycja (ACES)', key: 'exposure', min: 0.7, max: 1.6, step: 0.05, digits: 2,
+    });
 
     const info = this._section('Aktualny stan');
     const tierRow = this._row(info, 'Poziom', document.getElementById('tierBox')?.textContent || '—');
     const fpsRow = this._row(info, 'FPS', document.getElementById('fpsBox')?.textContent || '—');
     this._row(info, 'Rozdzielczość', `${fmt(innerWidth)}×${fmt(innerHeight)} @ ${Math.min(devicePixelRatio || 1, 2).toFixed(2)}×`);
+    const ps = this.stats?.() || null;
+    if (ps && ps.internal) {
+      this._row(info, 'Rozdzielczość wewnętrzna',
+        `${fmt(ps.internal[0])}×${fmt(ps.internal[1])} (${Math.round(ps.scale * 100)}%)`);
+      const fx = [
+        ps.taa ? 'skalowanie czasowe' : (ps.msaa ? `MSAA ×${ps.msaa}` : 'bez AA'),
+        ps.velocity && 'wektory ruchu',
+        ps.ao && 'AO',
+        ps.dof && 'DOF',
+        ps.lut && ps.lut !== 'none' && `LUT ${ps.lut}`,
+      ].filter(Boolean);
+      this._row(info, 'Aktywne efekty', fx.join(' • ') || '—');
+    }
     this._button(info, 'Odśwież', () => {
       tierRow.value.textContent = document.getElementById('tierBox')?.textContent || '—';
       fpsRow.value.textContent = document.getElementById('fpsBox')?.textContent || '—';

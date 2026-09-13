@@ -188,4 +188,122 @@ if (col.items.filter((it) => it.state === 0).length + col.items.filter((it) => i
 }
 console.log(`collectibles OK: score=${col.score} drift=${col.drift.toFixed(0)} rings=${col.ringsCollected}`);
 
+
+// ---- render pipeline: jitter, LUT and profile logic (pure JS, no WebGL)
+const { buildLUT, LUT_SIZE, halfToFloat } = await import('../src/render/pipeline/lut.js');
+const { JITTER_SEQUENCE, halton23, applyJitter, clearJitter } = await import('../src/render/pipeline/jitter.js');
+const { PIPE_PROFILES, Pipeline } = await import('../src/render/Pipeline.js');
+
+// Halton(2,3) stays in [0,1) and its base-2 radical inverse over the first
+// 2^k indices has the exact closed-form mean 0.5 - 1/2^(k+1) (low discrepancy)
+let hSum = 0;
+for (let i = 1; i <= 16; i++) {
+  const [hx, hy] = halton23(i);
+  if (hx < 0 || hx >= 1 || hy < 0 || hy >= 1) throw new Error('halton23 out of range');
+}
+for (let i = 0; i < 16; i++) hSum += halton23(i)[0];
+if (Math.abs(hSum / 16 - (0.5 - 1 / 32)) > 1e-12) throw new Error('halton23 base-2 mean is not exact');
+
+// jitter: sub-pixel, unbiased, no repeated samples (repeats would waste frames)
+if (JITTER_SEQUENCE.length !== 16) throw new Error('jitter sequence length');
+const seenJitter = new Set();
+let jxSum = 0; let jySum = 0;
+for (const [a, b] of JITTER_SEQUENCE) {
+  if (Math.abs(a) > 0.5 || Math.abs(b) > 0.5) throw new Error('jitter leaves the pixel footprint');
+  const k = `${a.toFixed(4)}:${b.toFixed(4)}`;
+  if (seenJitter.has(k)) throw new Error('duplicate jitter sample');
+  seenJitter.add(k);
+  jxSum += a; jySum += b;
+}
+if (Math.abs(jxSum) > 0.5 || Math.abs(jySum) > 0.5) throw new Error('jitter sequence is biased');
+
+// one pixel of jitter == 2/width in NDC, and it must be undone after the frame
+const jcam = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 500);
+applyJitter(jcam, 3, 1600, 900);
+const want8 = (2 * JITTER_SEQUENCE[3][0]) / 1600;
+const want9 = (2 * JITTER_SEQUENCE[3][1]) / 900;
+if (Math.abs(jcam.projectionMatrix.elements[8] - want8) > 1e-12) throw new Error('jitter X amplitude');
+if (Math.abs(jcam.projectionMatrix.elements[9] - want9) > 1e-12) throw new Error('jitter Y amplitude');
+clearJitter(jcam);
+if (jcam.projectionMatrix.elements[8] !== 0 || jcam.projectionMatrix.elements[9] !== 0) {
+  throw new Error('jitter was not cleared (would double up next frame)');
+}
+
+// 3D LUT: 32^3 half-float table, all texels finite and inside [0,1]
+const lutNat = buildLUT('natural');
+const lutId = buildLUT('none');
+if (lutNat.image.width !== LUT_SIZE || lutNat.image.depth !== LUT_SIZE) throw new Error('LUT dimensions');
+if (!(lutNat.image.data instanceof Uint16Array)) throw new Error('LUT must be half-float (filterable core in WebGL2)');
+const nat = Array.from(lutNat.image.data, halfToFloat);
+const ident = Array.from(lutId.image.data, halfToFloat);
+let badTexels = 0;
+for (const v of nat) if (!Number.isFinite(v) || v < 0 || v > 1) badTexels++;
+if (badTexels) throw new Error(`LUT has ${badTexels} invalid texels`);
+const lutIdx = (r, g, b) => ((b * LUT_SIZE + g) * LUT_SIZE + r) * 4;
+if (Math.abs(ident[lutIdx(16, 16, 16)] - 16 / 31) > 1e-3) throw new Error('bypass LUT is not identity');
+if (!(nat[lutIdx(0, 0, 0)] > 0)) throw new Error('natural LUT: blacks not lifted');
+if (!(nat[lutIdx(31, 31, 31)] < 1)) throw new Error('natural LUT: whites not rolled off');
+if (!(nat[lutIdx(31, 0, 0)] < 1)) throw new Error('natural LUT: saturated red not muted');
+if (!(nat[lutIdx(31, 0, 0) + 1] > 0.015)) throw new Error('natural LUT: no split-toning in reds');
+if (Math.abs(nat[lutIdx(31, 31, 31)] - nat[lutIdx(31, 31, 31) + 1]) > 1e-3) {
+  throw new Error('natural LUT: neutral white must stay neutral');
+}
+// the grading curve has to be monotonic, otherwise the LUT posterises tones
+for (let i = 1; i < LUT_SIZE; i++) {
+  if (nat[lutIdx(i, i, i)] < nat[lutIdx(i - 1, i - 1, i - 1)] - 1e-3) {
+    throw new Error(`natural LUT: non-monotonic ramp at ${i}`);
+  }
+}
+
+// profiles: temporal upscaling only ever runs below native resolution,
+// and turning it off must fall back to native + MSAA
+for (const p of PIPE_PROFILES) {
+  if (p.taa && p.renderScale >= 1) throw new Error('TAA without a resolution win');
+  if (!p.taa && p.renderScale !== 1) throw new Error('native path must not downscale');
+  if (p.velocity && !p.taa) throw new Error('motion vectors without TAA');
+}
+
+const stubRenderer = {
+  getPixelRatio: () => 1,
+  getSize: (v) => v.set(1280, 720),
+  getDrawingBufferSize: (v) => v.set(1280, 720),
+  setRenderTarget() {}, render() {}, clear() {}, setClearColor() {},
+  getRenderTarget: () => null,
+  getClearColor: (c) => c.setHex(0x000000),
+  getClearAlpha: () => 1,
+  autoClear: true,
+};
+const pcam = new THREE.PerspectiveCamera(62, 16 / 9, 0.3, 3200);
+const pipe = new Pipeline(stubRenderer, scene, pcam);
+pipe.setSize(1920, 1080, 1);
+pipe.configure(3, { taa: true, ao: true, dof: true, lut: 'natural' });
+if (pipe.internal.w !== Math.round(1920 * 0.7)) throw new Error('ULTRA internal resolution');
+if (!pipe.stats.taa || !pipe.stats.ao || !pipe.stats.dof || !pipe.stats.velocity) {
+  throw new Error('ULTRA stats incomplete');
+}
+if (pipe.stats.msaa !== 0) throw new Error('MSAA must be off while TAA runs');
+if (!pipe.depthTexture) throw new Error('no depth texture for AO/DOF');
+
+pipe.configure(3, { taa: false, ao: true, dof: true });
+if (pipe.scale !== 1 || pipe.stats.msaa !== 4) throw new Error('native fallback must be 1.0x + MSAA');
+if (pipe.stats.velocity) throw new Error('velocity pass survived TAA being disabled');
+
+pipe.configure(3, { taa: true, photo: true });
+if (pipe.scale !== 1) throw new Error('photo mode must render at full resolution');
+
+// begin/end frame contract: jitter lives only inside the frame
+pipe.configure(3, { taa: true });
+pipe.registerDynamic(car.group);
+pipe.beginFrame();
+if (pcam.projectionMatrix.elements[8] === 0) throw new Error('no jitter applied in beginFrame');
+const prevBefore = pipe._prevViewProj.clone();
+pipe.endFrame();
+if (pcam.projectionMatrix.elements[8] !== 0 || pcam.projectionMatrix.elements[9] !== 0) {
+  throw new Error('jitter leaked past endFrame');
+}
+if (pipe._prevViewProj.equals(prevBefore)) throw new Error('previous view-proj not stored');
+if (pipe.velocityPass.meshes.length === 0) throw new Error('dynamic meshes not registered');
+pipe.dispose();
+console.log(`pipeline OK: jitter=16 samples, LUT=${LUT_SIZE}^3, ultra internal ${Math.round(1920 * 0.7)}x${Math.round(1080 * 0.7)}`);
+
 console.log('HEADLESS TEST PASSED ✔');

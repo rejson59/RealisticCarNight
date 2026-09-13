@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node test/headless.mjs",
+    "test:glsl": "node test/shaders.mjs",
+    "lint": "eslint .",
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 5173"
