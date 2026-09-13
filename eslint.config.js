@@ -31,7 +31,8 @@ export default [
     files: ['test/**/*.mjs', 'scripts/**/*.mjs'],
     languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: {
       console: 'readonly', process: 'readonly', globalThis: 'writable',
-      setTimeout: 'readonly', URL: 'readonly', Date: 'readonly',
+      setTimeout: 'readonly', clearTimeout: 'readonly', setInterval: 'readonly',
+      clearInterval: 'readonly', URL: 'readonly', Date: 'readonly',
       TextEncoder: 'readonly', TextDecoder: 'readonly', fetch: 'readonly',
       localStorage: 'readonly', innerWidth: 'readonly', innerHeight: 'readonly',
       navigator: 'readonly', document: 'readonly', requestAnimationFrame: 'readonly',

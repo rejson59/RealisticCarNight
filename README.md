@@ -18,10 +18,46 @@ npm run preview    # serwer builda produkcyjnego
 npm test           # testy headless (miasto, fizyka, autopilot, AI, pierścienie, potok renderowania)
 npm run test:glsl  # walidacja shaderów GLSL ES 3.00 (wymaga glslangValidator, inaczej pomija)
 npm run lint       # eslint (src, testy, skrypty, service worker)
+npm run deploy     # (opcjonalnie) build + push na gałąź gh-pages
 node scripts/make-assets.mjs   # regeneracja ikon PWA i og.jpg ze źródła design/
 ```
 
 Gra działa w każdej nowoczesnej przeglądarce (desktop + telefon, da się ją też zainstalować jak aplikację — manifest PWA + service worker). Nie wymaga żadnych zewnętrznych assetów — całe miasto, samochód, tekstury, dźwięk **i muzyka w radiu** są generowane proceduralnie w kodzie.
+
+## 🌐 GitHub Pages (żeby gra działała, a nie tylko tekst)
+
+Strona na Pages żyje w **podkatalogu** (`https://rejson59.github.io/RealisticCarNight/`), więc:
+
+1. Build ma `base: './'` (`vite.config.js`) — inaczej `index.html` wskazuje `/assets/…`,
+   co na Pages daje 404 i widać sam ekran ładowania bez gry.
+2. PWA też jest ścieżkowanie względne: `%BASE_URL%` w `index.html`, `start_url`/`scope`/ikony
+   w `manifest.webmanifest` jako `./…`, `sw.js` rejestrowany z `import.meta.env.BASE_URL`,
+   a precache service workera używa ścieżek względnych wobec swojego scope.
+
+Publikacja — **`npm run deploy`** (najprostsza, działa od razu):
+
+```bash
+npm run deploy     # buduje dist/ i force-pushuje jego zawartość na gałąź gh-pages
+```
+
+Potem **jednorazowo** w repo: `Settings → Pages → Build and deployment → Source:
+*Deploy from a branch* → Branch: `gh-pages` / `(root)` → Save.
+Adres: <https://rejson59.github.io/RealisticCarNight/>
+
+> ⚠️ Obecne ustawienie repo to *Deploy from a branch: `main` / `docs`* — a `docs/`
+> zawiera `RENDERING_PIPELINE.md`, więc Pages serwowało **dokumentację jako tekst**
+> zamiast gry. To nie był bug kodu, tylko źródła publikacji.
+
+Opcjonalnie — automatyzacja przez **GitHub Actions** (build+deploy przy każdym pushu
+na `main`): skopiuj szablony z `deploy/` do `.github/workflows/`
+(`deploy/github-pages.yml` → `.github/workflows/pages.yml`,
+`deploy/ci.yml` → `.github/workflows/ci.yml`), a w ustawieniach Pages wybierz
+Source: **GitHub Actions**. Szablony leżą poza `.github/`, bo token bota, którym
+pracuję na tej gałęzi, nie ma uprawnienia `workflows` i GitHub odrzuca taki push —
+u Ciebie z Twoimi uprawnieniami to jedno `git add`.
+
+Niezależnie od wybranej drogi CI odpala: `npm test` (3 warstwy), `npm run test:glsl`,
+`npm run lint`, `npm run build` + strażnik ścieżek absolutnych w `dist/index.html`.
 
 ## 🕹 Sterowanie
 
@@ -138,6 +174,40 @@ test/headless.mjs         # testy bez WebGL: miasto, fizyka, AI, światła, pier
 test/shaders.mjs          # walidacja shaderów GLSL ES 3.00 (glslangValidator: kompilacja + link + uniformy)
 docs/RENDERING_PIPELINE.md# architektura potoku, budżet FPS i weryfikacja shaderów
 ```
+
+## ✅ Weryfikacja — co jest sprawdzane automatycznie
+
+`npm test` uruchamia trzy warstwy (bez przeglądarki, więc działają też w CI):
+
+| Test | Co naprawdę sprawdza |
+| --- | --- |
+| `test/headless.mjs` | logikę gry: deterministyczny seed miasta, fizykę auta, AI ruchu ulicznego, autopilota (dwa przejazdy co do centymetra), rekordy, HUD |
+| `test/pipeline-flow.mjs` | potok renderowania na stub-rendererze: skład łańcucha passów per tier, kolejność rysowania, jitter kamery, wiązanie samplerów, stan temporalny (historia TAA), **regresja nieparzystej liczby swapów**, spójność po resize, przełączniki, dispose |
+| `test/boot.mjs` | **prawdziwy start gry**: `src/main.js` w jsdom z mockiem WebGL2 i realnym canvasem 2D — buduje miasto, auto, ruch, PMREM i potok, klika „Start”, renderuje ~600 klatek, jeździ (W/D/spacja), przełącza kamerę, tier, tryb foto i robi zdjęcie; każdy `console.error`/wyjątek = porażka |
+
+Do tego `npm run test:glsl` (kompilacja + **link** shaderów GLSL ES 3.00 i cross-check
+uniformów GLSL ↔ JS) oraz `npm run lint`.
+
+Co te testy już wyłapały (i co jest naprawione):
+
+- **Łuk prędkościomierza nigdy się nie rysował** — `ctx.arc(x, y, r, start)` bez `endAngle`:
+  przeglądarka po cichu ignoruje takie wywołanie (NaN), więc kolorowy pasek prędkości znikał.
+- **Przełączniki użytkownika nadpisywały poziom grafiki** — na tierze NISKA włączały się
+  TAA+AO+DOF, czyli słaby telefon dostawał najdroższe efekty. Teraz tier jest *sufitem*
+  (`efekt = tier && przełącznik`), a menu wyszarza to, czego dany tier nie oferuje.
+- **Zmiana tieru nie przekazywała nowego `devicePixelRatio` do potoku** — bufory wewnętrzne
+  zostawały w starej skali i nie zgrywały się z canvasem.
+- **`uOutRes` PresentPassa był nadpisywany rozmiarem wewnętrznym** — `EffectComposer.addPass()`
+  sam woła `pass.setSize()`, więc ziarno, aberracja i wyostrzanie liczyły się dla złej
+  rozdzielczości na tierach WYSOKA/ULTRA.
+- **Dryf buforów kompozytora przy nieparzystej liczbie swapów** (tier WYSOKA = 3 swapy):
+  bez resetu ping-pongu scena lądowała w złym RT, a AO/DOF czytały nieaktualną głębokość.
+- **`RenderTarget.setSize()` nie zmienia rozmiaru `DepthTexture`** — three robi to leniwie
+  dopiero przy bindzie, więc po resize AO/DOF mogły czytać głębokość o złych wymiarach.
+
+CI: `.github/workflows/ci.yml` (PR + push) i `.github/workflows/pages.yml` (build + deploy na
+Pages) odpalają wszystkie cztery warstwy i dodatkowo pilnują, żeby `dist/index.html` nie miał
+ścieżek absolutnych — to właśnie one dawały „sam tekst bez gry” na Pages.
 
 ## 📝 Notatki techniczne
 

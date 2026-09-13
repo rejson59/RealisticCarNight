@@ -4,12 +4,14 @@
   "description": "Najbardziej realistyczna gra do chillowania sobie jeżdżąc po oświetlonym ogromnym mieście z nieziemską grafiką jakiej nie ma nawet GTA, a na dodatek to wszystko w przeglądarce!",
   "main": "index.js",
   "scripts": {
-    "test": "node test/headless.mjs",
+    "test": "node test/headless.mjs && node test/pipeline-flow.mjs && node test/boot.mjs",
     "test:glsl": "node test/shaders.mjs",
     "lint": "eslint .",
     "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 5173"
+    "preview": "vite preview --host 0.0.0.0 --port 5173",
+    "deploy": "node scripts/deploy-pages.mjs",
+    "test:boot": "node test/boot.mjs"
   },
   "repository": {
     "type": "git",
@@ -30,6 +32,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@napi-rs/canvas": "^1.0.9",
-    "eslint": "^9.39.5"
+    "eslint": "^9.39.5",
+    "jsdom": "^30.0.1"
   }
 }
