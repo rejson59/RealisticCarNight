@@ -134,9 +134,10 @@ export class Traffic {
         if (a === b) continue;
         const A = grid[a], B = grid[b];
         if (A.axisX !== B.axisX || A.lineIdx !== B.lineIdx || A.dir !== B.dir) continue;
+        const span = CITY.EXTENT + 60;   // cars wrap at ±(HALF+30)
         let gap = (B.t - A.t) * A.dir;
-        if (gap > CITY.EXTENT / 2) gap -= CITY.EXTENT + 40;
-        if (gap < -CITY.EXTENT / 2) gap += CITY.EXTENT + 40;
+        if (gap > span / 2) gap -= span;
+        if (gap < -span / 2) gap += span;
         if (gap > 0.5 && gap < 13) A.blocked = true;
       }
     }

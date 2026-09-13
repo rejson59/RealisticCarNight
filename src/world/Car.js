@@ -463,6 +463,9 @@ export class Car {
   /** rain / wet night: cones scatter more light */
   setWet(on) { this.coneWet = !!on; }
 
+  /** hide the volumetric cones for cameras that sit inside them */
+  setConesVisible(on) { for (const c of this.cones) c.visible = on; }
+
   /* -------------------------------------------------- volumetric cones */
   _buildLightCones() {
     const LEN = 26, RAD = 5.2;
@@ -505,6 +508,7 @@ export class Car {
     });
     this.coneBase = 0.22;
     this.coneWet = false;
+    this.cones = [];
     for (const sx of [-0.62, 0.62]) {
       const cone = new THREE.Mesh(geo, this.coneMat);
       cone.position.set(sx, 0.78, 2.25);
@@ -512,6 +516,7 @@ export class Car {
       cone.renderOrder = 3;
       cone.frustumCulled = false;
       this.group.add(cone);
+      this.cones.push(cone);
     }
     this.coneMat.uniforms.uIntensity.value = this.coneBase;
   }

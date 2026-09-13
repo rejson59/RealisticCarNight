@@ -538,6 +538,8 @@ class Game {
       }
 
       this.camRig.update(rawDt, this.car);
+      // the light cones wash the frame out when the camera sits inside them
+      this.car.setConesVisible(this.camRig.photo.active || this.camRig.mode === 0 || this.camRig.mode === 3);
 
       const kmhNow = this.car.speedKmh;
       const wantBlur = this.quality.tier >= 2 && !this.camRig.photo.active

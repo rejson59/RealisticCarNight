@@ -7,9 +7,10 @@ html, body {
   color: #dfe9f5;
   -webkit-user-select: none; user-select: none;
   -webkit-tap-highlight-color: transparent;
-  touch-action: none;
+  touch-action: manipulation;   /* no double-tap zoom, but menus can scroll */
 }
-#app, #app canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#app, #app canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
 
 /* ------------ overlays ------------ */
 #loading, #start, #help {
@@ -125,8 +126,12 @@ html, body {
   #gauge { right: 8px; bottom: 118px; width: 132px !important; height: 132px !important; }
   #minimap { width: 108px !important; height: 108px !important; }
   #kbhints { display: none !important; }
-  #sideBtns { top: auto; bottom: 210px; transform: none; right: 8px; flex-direction: column; }
-  #sideBtns button { width: 38px; height: 38px; font-size: 15px; }
+  /* horizontal strip of small buttons — a column would not fit a landscape phone */
+  #sideBtns {
+    top: auto; bottom: 172px; right: 50%; transform: translateX(50%);
+    flex-direction: row; gap: 6px;
+  }
+  #sideBtns button { width: 36px; height: 36px; font-size: 14px; border-radius: 10px; }
 }
 
 /* ------------ help ------------ */
